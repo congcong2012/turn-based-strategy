@@ -1,0 +1,35 @@
+{
+  "name": "ancient-tactics",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "可联机回合制战略游戏（古代战棋）MVP",
+  "scripts": {
+    "dev": "vite",
+    "build": "pnpm typecheck && vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "e2e:local": "playwright test --project=local",
+    "e2e:p2p": "playwright test --project=p2p"
+  },
+  "dependencies": {
+    "@trystero-p2p/core": "^0.25.4",
+    "@trystero-p2p/mqtt": "^0.25.4",
+    "@trystero-p2p/torrent": "^0.25.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

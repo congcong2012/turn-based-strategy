@@ -1,0 +1,145 @@
+:root {
+  --bg: #14110f;
+  --panel: #1e1a16;
+  --panel-2: #262019;
+  --line: #3a3128;
+  --text: #efe6d8;
+  --muted: #a3968a;
+  --red: #c8503c;
+  --cyan: #3fa7a0;
+  --gold: #d9a441;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 50% 0%, #241d17 0%, var(--bg) 60%);
+  color: var(--text);
+  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.app-header h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: 1px; }
+.app-header p { margin: 0; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.panel h2 { margin: 0 0 12px; font-size: 15px; color: var(--gold); font-weight: 600; }
+
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+.status-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.status-line b { color: var(--text); font-weight: 600; }
+
+.field { display: block; margin-bottom: 12px; }
+.field > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.field.inline { margin-bottom: 0; }
+.field.inline > span { margin-bottom: 4px; }
+
+input, select, textarea {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 9px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--cyan); outline-offset: 1px; }
+
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.row input { flex: 1 1 160px; width: auto; }
+
+button {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 9px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover:not(:disabled) { border-color: var(--gold); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: var(--red); border-color: #a33f2f; font-weight: 600; }
+button.danger { background: #33241f; border-color: #5a3a31; }
+
+.room-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.room-code {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: var(--gold);
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+.room-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.player-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.player-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.player-item.is-self { border-color: var(--cyan); }
+.player-item.is-offline { opacity: 0.5; }
+.player-name { flex: 1; font-weight: 600; }
+
+.tag {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.tag-self { border-color: var(--cyan); color: var(--cyan); }
+.tag-host { border-color: var(--gold); color: var(--gold); }
+.tag-ready { border-color: var(--cyan); color: var(--cyan); }
+.tag-waiting { color: var(--muted); }
+
+.room-controls { margin-top: 14px; }
+.room-extra { margin-top: 16px; gap: 16px; align-items: flex-end; }
+.room-extra .field.inline { flex: 1 1 160px; }
+
+.alert { margin: 0; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
+.alert.notice { background: #1d2a28; border: 1px solid #2f4a45; color: #bfe3df; }
+.alert.error { background: #2c1c19; border: 1px solid #5a3a31; color: #f0bdb2; }
+
+.sdp-panel summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.sdp-panel textarea { margin-top: 6px; }
+.sdp-panel button { margin-top: 10px; }
+
+.app-footer { text-align: center; padding-top: 8px; }
+
+@media (max-width: 520px) {
+  .room-code { font-size: 22px; letter-spacing: 4px; }
+}
