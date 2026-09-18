@@ -53,7 +53,8 @@ export function GameScreen({ view, actions }: GameScreenProps) {
 
   // DEV/E2E：把权威状态暴露出去，便于自动化断言（生产构建不生效）
   useEffect(() => {
-    if (!import.meta.env.DEV) return
+    const debugEnabled = import.meta.env.DEV || new URLSearchParams(window.location.search).has('debug')
+    if (!debugEnabled) return
     ;(globalThis as Record<string, unknown>).__atGame = {
       getState: () => game,
       selfId: view.selfId,
@@ -171,7 +172,11 @@ export function GameScreen({ view, actions }: GameScreenProps) {
       </header>
 
       <div className="game-body">
-        <BoardCanvas view={boardView} onTileClick={onTileClick} exposeDebug={import.meta.env.DEV} />
+        <BoardCanvas
+          view={boardView}
+          onTileClick={onTileClick}
+          exposeDebug={import.meta.env.DEV || new URLSearchParams(window.location.search).has('debug')}
+        />
 
         <aside className="game-panel">
           {isDeploy ? (

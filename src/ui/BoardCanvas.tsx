@@ -5,7 +5,7 @@ import type { BoardView } from '../render/boardApp'
 export interface BoardCanvasProps {
   view: BoardView
   onTileClick: (x: number, y: number) => void
-  /** DEV/E2E：把投影函数暴露出去，便于自动化点中具体格子 */
+  /** DEV/E2E：把投影函数暴露出去，便于自动化点中具体格子（生产仅 ?debug=1 时开启） */
   exposeDebug?: boolean
 }
 
