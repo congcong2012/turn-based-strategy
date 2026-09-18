@@ -1,11 +1,12 @@
 {
-  "version": 1,
+  "version": 2,
   "maxPlayers": 2,
   "roundLimit": 30,
   "startFunds": 4000,
   "deployBudget": 3000,
   "deployMaxUnits": 4,
-  "unitCap": 20,
+  "unitCap": 32,
+  "unitsPerBarracksPerTurn": 2,
   "minDamage": 1,
   "repairPerTurn": 20,
   "capturePoints": 20

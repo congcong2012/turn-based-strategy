@@ -1,8 +1,8 @@
 /** 回合状态机与经济（GDD 3.2 / 6 / 9）——全部为纯函数：输入状态 → 新状态 + 事件 */
 
-import { DATA, buildingType, getMap, initialBuildings, unitType } from './data'
+import { DATA, buildingType, getMap, initialBuildings, moveCost, unitType } from './data'
 import type { GameData } from './data'
-import { buildingById, clone } from './board'
+import { buildingById, clone, mapOf } from './board'
 import type { GameEvent, GameState, PlayerId, Unit } from './types'
 
 function nextUnitId(state: GameState): string {
@@ -29,6 +29,7 @@ export function createGame(mapId: string, players: PlayerId[], data: GameData = 
     pending: [],
     turnIndex: 0,
     round: 1,
+    turnSeq: 0,
     phase: 'DEPLOY',
     turnPhase: 'ACTION',
     deploy,
@@ -55,9 +56,12 @@ export function startTurn(state: GameState, data: GameData = DATA): { state: Gam
   const s = clone(state)
   const events: GameEvent[] = []
   const player = s.players[s.turnIndex]
+  s.turnSeq += 1
   s.turnPhase = 'START'
 
-  // 1) 生产队列出场（出兵格被占则顺延）
+  // 1) 生产队列出场
+  //    出兵位：优先兵营格本身，其次兵营四邻的空格（这样一座兵营一回合能出 2 个兵）；
+  //    都不可用则顺延到下一回合。
   const remaining: typeof s.pending = []
   for (const item of s.pending) {
     if (item.owner !== player) {
@@ -65,25 +69,40 @@ export function startTurn(state: GameState, data: GameData = DATA): { state: Gam
       continue
     }
     const building = buildingById(s, item.buildingId)
-    const blocked = !building || building.owner !== player || s.units.some((u) => u.x === building.x && u.y === building.y)
-    if (blocked) {
+    if (!building || building.owner !== player) {
       remaining.push(item)
       continue
     }
     const type = unitType(item.type, data)
+    const occupied = (x: number, y: number) => s.units.some((u) => u.x === x && u.y === y)
+    const candidates = [
+      { x: building.x, y: building.y },
+      { x: building.x, y: building.y - 1 },
+      { x: building.x + 1, y: building.y },
+      { x: building.x, y: building.y + 1 },
+      { x: building.x - 1, y: building.y },
+    ]
+    const spot = candidates.find((c) => {
+      if (occupied(c.x, c.y)) return false
+      return moveCost(mapOf(s, data), c.x, c.y, type.moveType, data) !== null
+    })
+    if (!spot) {
+      remaining.push(item)
+      continue
+    }
     const unit: Unit = {
       id: item.id,
       type: item.type,
       owner: item.owner,
-      x: building.x,
-      y: building.y,
+      x: spot.x,
+      y: spot.y,
       hp: type.hp,
       moved: false,
       acted: false,
       capture: null,
     }
     s.units.push(unit)
-    events.push({ type: 'spawn', unitId: unit.id, unitType: unit.type, playerId: item.owner, x: building.x, y: building.y })
+    events.push({ type: 'spawn', unitId: unit.id, unitType: unit.type, playerId: item.owner, x: spot.x, y: spot.y })
   }
   s.pending = remaining
 

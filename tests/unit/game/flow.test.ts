@@ -51,9 +51,9 @@ describe('部署阶段', () => {
     expect(s.phase).toBe('PLAYING')
     expect(s.turnIndex).toBe(0)
     expect(s.round).toBe(1)
-    // 起始资金 4000 + 首回合收入（王城 2000 + 兵营 500）= 6500
+    // 起始资金 4000 + 首回合收入（王城 1200 + 兵营 300）
     expect(s.funds[P1]).toBe(4000 + incomeOf(s, P1, data))
-    expect(incomeOf(s, P1, data)).toBe(2500)
+    expect(incomeOf(s, P1, data)).toBe(1500)
     expect(s.units.filter((u) => u.owner === P1).every((u) => !u.acted)).toBe(true)
   })
 })
@@ -138,7 +138,7 @@ describe('占领与经济', () => {
     const village = s.buildings.find((b) => b.id === 'v-south')!
     expect(village.owner).toBe(P1)
     expect(village.capture).toBeNull()
-    expect(incomeOf(s, P1, data)).toBe(2500 + buildingType('village', data).income)
+    expect(incomeOf(s, P1, data)).toBe(1500 + buildingType('village', data).income)
   })
 
   it('移动会打断占领进度', () => {
@@ -154,27 +154,65 @@ describe('占领与经济', () => {
     expect(s.units.find((u) => u.id === u2.id)?.capture).toBeNull()
   })
 
-  it('生产：扣费 → 下一回合在兵营出场；出兵格被占则顺延', () => {
+  it('生产：扣费 → 下一回合在兵营出场', () => {
     let s = playing()
     const fundsBefore = s.funds[P1]
     s = must(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'spear' }, data))
     expect(s.funds[P1]).toBe(fundsBefore - unitType('spear', data).cost)
     expect(s.pending).toHaveLength(1)
-    expectCode(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'spear' }, data), 'ALREADY_DONE')
 
     s = must(run(s, P1, { type: 'endTurn' }, data))
     s = must(run(s, P2, { type: 'endTurn' }, data))
     const spawned = s.units.find((u) => u.owner === P1 && u.x === 1 && u.y === 7)
     expect(spawned?.type).toBe('spear')
     expect(s.pending).toHaveLength(0)
+  })
 
-    // 出兵格被占 → 顺延
-    let s2 = playing()
-    s2 = addUnit(s2, data, 'sword', P1, 1, 7)
-    s2 = must(run(s2, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'sword' }, data))
-    s2 = must(run(s2, P1, { type: 'endTurn' }, data))
-    s2 = must(run(s2, P2, { type: 'endTurn' }, data))
-    expect(s2.pending).toHaveLength(1)
+  it('兵营产能：每回合每座兵营最多 2 单，第三个被拒', () => {
+    let s = playing()
+    s.funds[P1] = 10000
+    s = must(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'sword' }, data))
+    s = must(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'sword' }, data))
+    expect(s.pending).toHaveLength(2)
+    expectCode(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'sword' }, data), 'ALREADY_DONE')
+
+    // 换回合后配额重置
+    s = must(run(s, P1, { type: 'endTurn' }, data))
+    s = must(run(s, P2, { type: 'endTurn' }, data))
+    s = must(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'sword' }, data))
+    expect(s.pending.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('出场位：两单同时出场（兵营格 + 相邻空格）', () => {
+    let s = playing()
+    s.funds[P1] = 10000
+    s = must(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'spear' }, data))
+    s = must(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'bow' }, data))
+    s = must(run(s, P1, { type: 'endTurn' }, data))
+    s = must(run(s, P2, { type: 'endTurn' }, data))
+
+    const spawned = s.units.filter((u) => u.owner === P1 && (u.type === 'spear' || u.type === 'bow'))
+    expect(spawned).toHaveLength(2)
+    expect(s.pending).toHaveLength(0)
+    // 一个占兵营格 (1,7)，另一个落在其四邻
+    const atBarracks = spawned.filter((u) => u.x === 1 && u.y === 7)
+    const adjacent = spawned.filter((u) => Math.abs(u.x - 1) + Math.abs(u.y - 7) === 1)
+    expect(atBarracks).toHaveLength(1)
+    expect(adjacent).toHaveLength(1)
+  })
+
+  it('出场位：兵营格与四邻全被占 → 顺延到下一回合', () => {
+    let s = playing()
+    s.funds[P1] = 10000
+    // 堵死兵营 (1,7) 与其四邻 (1,6) (2,7) (1,8) (0,7)
+    for (const [x, y] of [[1, 7], [1, 6], [2, 7], [1, 8], [0, 7]] as const) {
+      s = addUnit(s, data, 'sword', P1, x, y)
+    }
+    s = must(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'spear' }, data))
+    s = must(run(s, P1, { type: 'endTurn' }, data))
+    s = must(run(s, P2, { type: 'endTurn' }, data))
+    expect(s.pending).toHaveLength(1)
+    expect(s.units.some((u) => u.type === 'spear')).toBe(false)
   })
 
   it('经济与资金不足校验', () => {
@@ -263,6 +301,6 @@ describe('startTurn 幂等与收入', () => {
     let s = playing()
     const before = s.funds[P1]
     const next = startTurn(s, data)
-    expect(next.state.funds[P1]).toBe(before + 2500)
+    expect(next.state.funds[P1]).toBe(before + 1500)
   })
 })

@@ -214,13 +214,16 @@ function produceUnit(state: GameState, playerId: PlayerId, buildingId: string, u
   const type = data.units[unitTypeId]
   if (!type) return fail('UNKNOWN_TYPE')
   if ((state.funds[playerId] ?? 0) < type.cost) return fail('INSUFFICIENT_FUNDS')
-  if (state.pending.some((p) => p.buildingId === buildingId && p.owner === playerId)) return fail('ALREADY_DONE')
+  const orderedThisTurn = state.pending.filter(
+    (p) => p.buildingId === buildingId && p.owner === playerId && p.turnSeq === state.turnSeq,
+  ).length
+  if (orderedThisTurn >= data.rules.unitsPerBarracksPerTurn) return fail('ALREADY_DONE')
   const total = unitsOf(state, playerId).length + state.pending.filter((p) => p.owner === playerId).length
   if (total >= data.rules.unitCap) return fail('UNIT_CAP_REACHED')
 
   const s = clone(state)
   s.funds[playerId] = (s.funds[playerId] ?? 0) - type.cost
-  s.pending.push({ id: 'u' + s.nextSeq, type: unitTypeId, owner: playerId, buildingId })
+  s.pending.push({ id: 'u' + s.nextSeq, type: unitTypeId, owner: playerId, buildingId, turnSeq: s.turnSeq })
   s.nextSeq += 1
   s.rev += 1
   return ok(s, [{ type: 'produce', buildingId, unitType: unitTypeId, playerId, cost: type.cost }])

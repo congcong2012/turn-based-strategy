@@ -38,6 +38,8 @@ export function isPlausibleGame(value: unknown): value is GameState {
   if (!Array.isArray(state.players) || state.players.length < 2) return false
   if (!Array.isArray(state.units) || !Array.isArray(state.buildings)) return false
   if (typeof state.turnIndex !== 'number' || typeof state.round !== 'number') return false
+  // 规则版本升级后旧对局字段不全，直接丢弃，避免用错规则继续下棋
+  if (typeof state.turnSeq !== 'number') return false
   if (state.phase !== 'DEPLOY' && state.phase !== 'PLAYING' && state.phase !== 'GAME_OVER') return false
   return true
 }

@@ -71,6 +71,8 @@ export type PendingUnit = {
   type: string
   owner: PlayerId
   buildingId: string
+  /** 下单时的回合序号（用于限制"每座兵营每回合的下单数"） */
+  turnSeq: number
 }
 
 export type GameState = {
@@ -83,6 +85,8 @@ export type GameState = {
   pending: PendingUnit[]
   turnIndex: number
   round: number
+  /** 每进入一个小回合 +1（生产下单配额按它计数） */
+  turnSeq: number
   phase: GamePhase
   turnPhase: TurnPhase
   deploy: Record<PlayerId, { budget: number; placed: number; done: boolean }>

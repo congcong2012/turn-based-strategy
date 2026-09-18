@@ -25,6 +25,8 @@ export type Rules = {
   deployBudget: number
   deployMaxUnits: number
   unitCap: number
+  /** 每座兵营每回合可下达的生产指令数 */
+  unitsPerBarracksPerTurn: number
   minDamage: number
   repairPerTurn: number
   capturePoints: number

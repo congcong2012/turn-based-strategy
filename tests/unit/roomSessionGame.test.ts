@@ -104,8 +104,8 @@ describe('对局指令的房间集成（房主权威）', () => {
     expect(alice.view.game?.phase).toBe('PLAYING')
     expect(alice.view.myTurn).toBe(true)
     expect(bob.view.myTurn).toBe(false)
-    // 先手方 alice 的 START 已结算（起始 4000 + 王城 2000 + 兵营 500×2）
-    expect(alice.view.game?.funds.alice).toBe(7000)
+    // 先手方 alice 的 START 已结算（起始 4000 + 王城 1200 + 兵营 300×2）
+    expect(alice.view.game?.funds.alice).toBe(5800)
 
     // 不是自己的回合 → 拒绝
     const unit = bob.view.game!.units.find((u) => u.owner === 'bob')!
