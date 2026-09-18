@@ -64,6 +64,7 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     canSkipTurn: false,
     offlinePlayers: [],
     log: [],
+    events: [],
   }
 }
 

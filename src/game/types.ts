@@ -98,7 +98,15 @@ export type GameState = {
 export type GameEvent =
   | { type: 'deploy'; unitId: string; unitType: string; playerId: PlayerId; x: number; y: number; cost: number }
   | { type: 'deployDone'; playerId: PlayerId }
-  | { type: 'move'; unitId: string; playerId: PlayerId; from: { x: number; y: number }; to: { x: number; y: number } }
+  | {
+      type: 'move'
+      unitId: string
+      playerId: PlayerId
+      from: { x: number; y: number }
+      to: { x: number; y: number }
+      /** 逐格路径（不含起点），供客户端播放移动动画 */
+      path: Array<{ x: number; y: number }>
+    }
   | { type: 'attack'; attackerId: string; defenderId: string; damage: number; counterDamage: number; destroyed: string[] }
   | { type: 'capture'; unitId: string; buildingId: string; playerId: PlayerId; points: number; captured: boolean }
   | { type: 'produce'; buildingId: string; unitType: string; playerId: PlayerId; cost: number }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BoardApp } from '../render/boardApp'
 import type { BoardView } from '../render/boardApp'
 
@@ -14,6 +14,7 @@ export function BoardCanvas({ view, onTileClick, exposeDebug = false }: BoardCan
   const appRef = useRef<BoardApp | null>(null)
   const handlerRef = useRef(onTileClick)
   const viewRef = useRef(view)
+  const [error, setError] = useState<string | null>(null)
   handlerRef.current = onTileClick
   viewRef.current = view
 
@@ -23,7 +24,9 @@ export function BoardCanvas({ view, onTileClick, exposeDebug = false }: BoardCan
     appRef.current = app
     const host = hostRef.current
     if (!host) return
-    void app.mount(host).then(() => {
+    app
+      .mount(host)
+      .then(() => {
       if (disposed) {
         app.destroy()
         return
@@ -36,7 +39,11 @@ export function BoardCanvas({ view, onTileClick, exposeDebug = false }: BoardCan
           scale: () => app.getScale(),
         }
       }
-    })
+      })
+      .catch((err: unknown) => {
+        if (disposed) return
+        setError(String((err as Error)?.message ?? err))
+      })
     return () => {
       disposed = true
       appRef.current = null
@@ -48,5 +55,13 @@ export function BoardCanvas({ view, onTileClick, exposeDebug = false }: BoardCan
     appRef.current?.setView(view)
   }, [view])
 
-  return <div className="board-host" data-testid="board" ref={hostRef} />
+  return (
+    <div className="board-host" data-testid="board" ref={hostRef}>
+      {error ? (
+        <p className="alert error" data-testid="board-error">
+          棋盘渲染初始化失败（{error}）。请更新浏览器或改用支持 WebGL 的设备。
+        </p>
+      ) : null}
+    </div>
+  )
 }

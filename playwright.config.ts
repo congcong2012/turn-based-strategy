@@ -31,6 +31,12 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], baseURL: DEV_URL },
     },
     {
+      // 移动端：具体设备描述符在 tests/e2e/mobile.spec.ts 里用 test.use 覆盖
+      name: 'mobile',
+      testMatch: /mobile\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], baseURL: DEV_URL },
+    },
+    {
       name: 'p2p',
       testMatch: /p2p\.spec\.ts/,
       timeout: 120_000,

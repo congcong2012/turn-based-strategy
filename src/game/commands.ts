@@ -130,7 +130,7 @@ function moveUnit(state: GameState, playerId: PlayerId, unitId: string, x: numbe
   target.moved = true
   if (target.capture) target.capture = null // 移动打断占领
   s.rev += 1
-  return ok(s, [{ type: 'move', unitId, playerId, from, to: { x, y } }])
+  return ok(s, [{ type: 'move', unitId, playerId, from, to: { x, y }, path }])
 }
 
 function attackUnit(state: GameState, playerId: PlayerId, unitId: string, targetId: string, data: GameData): CommandResult {

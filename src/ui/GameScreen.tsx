@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DATA, getMap, unitType } from '../game/data'
 import { attackableTargets, reachableDestinations } from '../game/movement'
 import { buildingAt, unitAt } from '../game/board'
@@ -7,6 +7,7 @@ import type { RoomView } from '../net/roomSession'
 import type { RoomActions } from '../hooks/useRoom'
 import type { GameState, PlayerId } from '../game/types'
 import { BoardCanvas } from './BoardCanvas'
+import { isSoundOn, playSound, setSoundOn, soundForEvent } from './sound'
 import type { BoardView } from '../render/boardApp'
 
 export interface GameScreenProps {
@@ -62,6 +63,34 @@ export function GameScreen({ view, actions }: GameScreenProps) {
     }
   }, [game, view.myTurn, view.selfId])
 
+  // M5：把最近的移动路径交给渲染层，用于逐格播放
+  const movePaths = useMemo(() => {
+    const paths: Record<string, Array<{ x: number; y: number }>> = {}
+    for (const entry of view.events) {
+      if (entry.event.type === 'move') paths[entry.event.unitId] = entry.event.path
+    }
+    return paths
+  }, [view.events])
+
+  // M5：事件音效（按序号去重，保证每条事件只响一次）
+  const lastSoundSeq = useRef(0)
+  useEffect(() => {
+    for (const entry of view.events) {
+      if (entry.seq <= lastSoundSeq.current) continue
+      lastSoundSeq.current = entry.seq
+      const name = soundForEvent(entry.event.type)
+      if (name) playSound(name)
+    }
+  }, [view.events])
+
+  const [soundOn, setSoundOnState] = useState(() => isSoundOn())
+  const toggleSound = () => {
+    const next = !soundOn
+    setSoundOn(next)
+    setSoundOnState(next)
+    if (next) playSound('click')
+  }
+
   const boardView: BoardView = {
     state: game,
     reachable,
@@ -69,6 +98,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
     selectedUnitId,
     selectedBuildingId,
     deployZoneIndex: isDeploy && !myDeploy?.done ? myIndex : null,
+    movePaths,
   }
 
   const clearSelection = useCallback(() => {
@@ -87,6 +117,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
           setHint('先在右侧选择要部署的兵种')
           return
         }
+        playSound('click')
         if (myDeploy?.done) {
           setHint('你已完成部署')
           return
@@ -106,6 +137,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
 
       // 1) 选中自己的单位
       if (unit && unit.owner === view.selfId && !unit.acted) {
+        playSound('click')
         setSelectedUnitId(unit.id)
         setSelectedBuildingId(null)
         setHint(null)
@@ -168,6 +200,9 @@ export function GameScreen({ view, actions }: GameScreenProps) {
           资金 <b data-testid="funds-label">{game.funds[view.selfId] ?? 0}</b>
         </span>
         <span className="hud-item muted small">房间 {view.roomCode}</span>
+        <button type="button" data-testid="sound-toggle" onClick={toggleSound} title="音效开关">
+          {soundOn ? '🔊 音效' : '🔇 静音'}
+        </button>
         <button type="button" data-testid="leave-button" onClick={() => actions.leave()}>
           离开
         </button>

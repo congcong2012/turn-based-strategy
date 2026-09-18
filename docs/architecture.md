@@ -148,6 +148,18 @@ DEV 下会暴露 `window.__atBoard.project(x,y)`（格子→屏幕坐标），�
 
 选举阶段（`hostElection.phase`）随对局阶段切换成 DEPLOY/PLAYING，从而自动落实"LOBBY 之外不允许接管"。
 
+### ADR-14：渲染层的两个「静默杀手」（M5 实录）
+
+1. **PixiJS 默认优先 WebGPU**：在没有可用 GPU 的环境（Playwright 移动端模拟等）Application.init()
+   既不抛错也不 resolve，表现是「棋盘一片空白且控制台干净」。现在显式 preference: 'webgl'，
+   并且 BoardCanvas 对 mount 失败给出可见提示（data-testid=board-error）。
+2. **小屏适配**：MIN_SCALE 原为 0.5，24×24 棋盘（1152px）在 393px 宽的手机上放不下，
+   相机中心偏移为负 → 投影坐标落到画布外 → 点击命中 HUD。现在下限 0.2（整盘可见），
+   并给相机加了边界（棋盘不会被拖到完全看不见）。
+
+排查手法值得复用：**先量数（canvas 是否存在 / 投影坐标 / 命中元素），再看控制台**——
+这两个问题都不会在控制台留下痕迹。
+
 ### ADR-13：平衡靠模拟，不靠手感
 
 所有数值在 `src/data/*.json`，因此可以**用真实数据跑离线模拟**：

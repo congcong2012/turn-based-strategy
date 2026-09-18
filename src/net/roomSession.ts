@@ -84,7 +84,11 @@ export interface RoomView {
   offlinePlayers: PlayerId[]
   /** M3：中文战报（最新在最后） */
   log: string[]
+  /** M5：最近的原始事件（带序号，供渲染层播动画与音效，保证只播一次） */
+  events: LoggedEvent[]
 }
+
+export type LoggedEvent = { seq: number; event: GameEvent }
 
 export interface RoomSessionOptions {
   playerId: PlayerId
@@ -140,6 +144,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   let lastLobbyRev = -1
   let game: GameState | null = null
   let log: string[] = []
+  let recentEvents: LoggedEvent[] = []
+  let eventSeq = 0
 
   const peerToPlayer = new Map<PeerId, PlayerId>()
   const playerToPeer = new Map<PlayerId, PeerId>()
@@ -235,12 +241,14 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       canSkipTurn: isHost() && currentOffline && game?.phase === 'PLAYING',
       offlinePlayers: players.filter((p) => !p.connected).map((p) => p.playerId),
       log,
+      events: recentEvents,
     }
   }
 
   /** 把内核事件翻译成战报（用"变更前"的状态解析已被歼灭单位/已易主据点的名字） */
   function appendLog(events: GameEvent[], before: GameState | null, after: GameState): void {
     if (events.length === 0) return
+    void after
     const nameOf = (playerId: PlayerId): string =>
       lobby?.players.find((p) => p.playerId === playerId)?.nickname ?? (playerId === selfId ? nickname : playerId.slice(0, 6))
     const ctx: LogContext = {
@@ -256,6 +264,11 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       playerName: nameOf,
     }
     log = [...log, ...describeEvents(events, ctx)].slice(-60)
+    const logged = events.map((event) => {
+      eventSeq += 1
+      return { seq: eventSeq, event }
+    })
+    recentEvents = [...recentEvents, ...logged].slice(-12)
   }
 
   function broadcastGame(events: GameEvent[] = []): void {
@@ -560,6 +573,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     roomCode = null
     ready = false
     log = []
+    recentEvents = []
+    eventSeq = 0
     lastLobbyHost = null
     lastLobbyRev = -1
     status = 'idle'
@@ -588,6 +603,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       lobby = null
       game = null
       log = []
+      recentEvents = []
+      eventSeq = 0
       lastLobbyHost = null
       lastLobbyRev = -1
       helloAttempts = 0

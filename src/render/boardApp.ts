@@ -21,14 +21,18 @@ export interface BoardView {
   selectedBuildingId: string | null
   /** 需要高亮部署区的玩家序号 */
   deployZoneIndex: number | null
+  /** M5：单位 → 本次移动的逐格路径（含终点），用于播放移动动画 */
+  movePaths?: Record<string, Array<{ x: number; y: number }>>
 }
 
 const OWNER_COLORS = [0xc8503c, 0x3fa7a0, 0xd9a441, 0x8a6fd0]
 const NEUTRAL = 0x6b6255
-const MIN_SCALE = 0.5
+// 小屏（手机 393px 宽）要能一次看全 24×24 棋盘：1152px 宽 → 需要 ~0.34 倍，因此下限放到 0.2
+const MIN_SCALE = 0.2
 const MAX_SCALE = 2
 const MOVE_ANIM_MS = 220
 const FLASH_MS = 380
+const FLOATER_MS = 700
 
 function colorOf(hex: string): number {
   return Number.parseInt(hex.replace('#', ''), 16)
@@ -66,11 +70,16 @@ export class BoardApp {
 
   /** 动画状态：上一帧各单位的格子位置与血量 */
   private snapshots = new Map<string, UnitSnapshot>()
-  private animFrom = new Map<string, { x: number; y: number }>()
+  private animPath = new Map<string, Array<{ x: number; y: number }>>()
   private animStartedAt = 0
+  private animDuration = MOVE_ANIM_MS
   private animating = false
   private flashes = new Map<string, number>()
+  private floaters: Array<{ text: string; x: number; y: number; color: number; startAt: number }> = []
   private tickHandler: (() => void) | null = null
+  /** 多指触摸（双指缩放） */
+  private pointers = new Map<number, { x: number; y: number }>()
+  private pinchDistance = 0
 
   async mount(container: HTMLElement): Promise<void> {
     // 动态 import：PixiJS 单独分包，只有真正进入对局时才下载
@@ -85,6 +94,9 @@ export class BoardApp {
       antialias: true,
       resolution: Math.min(2, globalThis.devicePixelRatio || 1),
       autoDensity: true,
+      // 显式走 WebGL：Pixi v8 默认会先尝试 WebGPU，在没有 GPU / 移动端模拟等环境下
+      // init() 可能既不报错也不 resolve（表现为棋盘空白），棋盘 2D 渲染用 WebGL 足够。
+      preference: 'webgl',
     })
     // React StrictMode 会"挂载→卸载→再挂载"：初始化期间已被 destroy 就直接收尾，
     // 否则 Pixi 会在未初始化的 Application 上调私有方法抛错，把整棵 React 树带崩。
@@ -154,21 +166,47 @@ export class BoardApp {
     const now = Date.now()
     const next = new Map<string, UnitSnapshot>()
     let startedAnimation = false
+    let longestPath = 1
+
     for (const unit of state.units) {
       const prev = this.snapshots.get(unit.id)
       next.set(unit.id, { x: unit.x, y: unit.y, hp: unit.hp })
       if (!prev) continue
+
       if (prev.x !== unit.x || prev.y !== unit.y) {
-        this.animFrom.set(unit.id, { x: prev.x, y: prev.y })
+        // 优先用引擎给的逐格路径；拿不到就退化成直线
+        const given = this.view?.movePaths?.[unit.id]
+        const path = given && given.length > 0 ? given : [{ x: unit.x, y: unit.y }]
+        this.animPath.set(unit.id, path)
         startedAnimation = true
+        longestPath = Math.max(longestPath, path.length)
       }
-      if (unit.hp < prev.hp) this.flashes.set(unit.id, now + FLASH_MS)
+      if (unit.hp < prev.hp) {
+        this.flashes.set(unit.id, now + FLASH_MS)
+        this.floaters.push({
+          text: '-' + (prev.hp - unit.hp),
+          x: prev.x,
+          y: prev.y,
+          color: 0xff8a6a,
+          startAt: now,
+        })
+      }
     }
+
+    // 阵亡单位：在它最后的位置弹一个歼灭提示
+    for (const [id, prev] of this.snapshots) {
+      if (next.has(id)) continue
+      this.floaters.push({ text: '歼灭', x: prev.x, y: prev.y, color: 0xf0d27a, startAt: now })
+    }
+
     this.snapshots = next
     if (startedAnimation) {
       this.animStartedAt = now
+      // 每格约 110ms，整体限制在 180–700ms
+      this.animDuration = Math.max(180, Math.min(700, longestPath * 110))
       this.animating = true
     }
+    this.floaters = this.floaters.filter((f) => now - f.startAt < FLOATER_MS)
     for (const [id, expiry] of [...this.flashes]) {
       if (expiry <= now) this.flashes.delete(id)
     }
@@ -176,12 +214,13 @@ export class BoardApp {
 
   private onTick(): void {
     const now = Date.now()
-    const animating = this.animating && now - this.animStartedAt < MOVE_ANIM_MS * 1.6
+    const animating = this.animating && now - this.animStartedAt < this.animDuration
     const flashing = [...this.flashes.values()].some((expiry) => expiry > now)
-    if (!animating && !flashing) {
+    const floating = this.floaters.some((f) => now - f.startAt < FLOATER_MS)
+    if (!animating && !flashing && !floating) {
       if (this.animating) {
         this.animating = false
-        this.animFrom.clear()
+        this.animPath.clear()
         this.render()
       }
       return
@@ -189,16 +228,28 @@ export class BoardApp {
     if (this.view) this.render()
   }
 
-  /** 单位当前应画在哪（动画期间做线性插值） */
+  /** 单位当前应画在哪：沿逐格路径做分段插值 */
   private unitPixel(unitId: string, x: number, y: number): { x: number; y: number } {
-    const from = this.animFrom.get(unitId)
-    if (!from || !this.animating) {
+    const path = this.animPath.get(unitId)
+    if (!path || !this.animating) {
       return { x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 }
     }
-    const t = Math.min(1, (Date.now() - this.animStartedAt) / MOVE_ANIM_MS)
-    const eased = 1 - (1 - t) * (1 - t)
-    const px = (from.x + (x - from.x) * eased) * TILE + TILE / 2
-    const py = (from.y + (y - from.y) * eased) * TILE + TILE / 2
+    const t = Math.min(1, (Date.now() - this.animStartedAt) / this.animDuration)
+    const eased = t
+    const legs = path.length
+    const pos = eased * legs
+    const index = Math.min(legs - 1, Math.floor(pos))
+    const local = pos - index
+    const from = index === 0 ? null : path[index - 1]
+    const prev = this.snapshots.get(unitId)
+    const startX = from ? from.x : (prev?.x ?? x)
+    const startY = from ? from.y : (prev?.y ?? y)
+    // 起点：路径第一段从"移动前的位置"出发
+    const originX = index === 0 ? startX : path[index - 1].x
+    const originY = index === 0 ? startY : path[index - 1].y
+    const target = path[index]
+    const px = (originX + (target.x - originX) * local) * TILE + TILE / 2
+    const py = (originY + (target.y - originY) * local) * TILE + TILE / 2
     return { x: px, y: py }
   }
 
@@ -226,7 +277,30 @@ export class BoardApp {
     this.applyCamera()
   }
 
+  /** 手动把棋盘重新适配到可视区（供 UI 按钮调用） */
+  refit(): void {
+    if (this.destroyed || !this.initialized) return
+    this.userInteracted = false
+    const host = this.canvas?.parentElement
+    if (host) this.fit(host)
+  }
+
+  /** 相机边界：棋盘始终至少有一部分留在视野内（避免手机上把棋盘拖丢） */
+  private clampOffsets(): void {
+    const { width, height } = this.boardSize()
+    const viewW = this.app?.renderer?.width ? this.app.renderer.width / (this.app.renderer.resolution || 1) : 0
+    const viewH = this.app?.renderer?.height ? this.app.renderer.height / (this.app.renderer.resolution || 1) : 0
+    if (viewW <= 0 || viewH <= 0) return
+    const scaledW = width * this.scale
+    const scaledH = height * this.scale
+    const marginX = Math.min(80, scaledW * 0.5)
+    const marginY = Math.min(80, scaledH * 0.5)
+    this.offsetX = Math.max(marginX - scaledW, Math.min(viewW - marginX, this.offsetX))
+    this.offsetY = Math.max(marginY - scaledH, Math.min(viewH - marginY, this.offsetY))
+  }
+
   private applyCamera(): void {
+    this.clampOffsets()
     this.world.scale.set(this.scale)
     this.world.position.set(this.offsetX, this.offsetY)
   }
@@ -235,14 +309,48 @@ export class BoardApp {
     const canvas = this.canvas
     if (!canvas) return
 
+    const pinchInfo = () => {
+      const [a, b] = [...this.pointers.values()]
+      return { distance: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2 }
+    }
+
     canvas.addEventListener('pointerdown', (event) => {
       this.userInteracted = true
+      this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
       this.dragging = true
       this.moved = false
       this.lastPointer = { x: event.clientX, y: event.clientY }
-      canvas.setPointerCapture(event.pointerId)
+      if (this.pointers.size === 2) {
+        this.pinchDistance = pinchInfo().distance
+        this.moved = true // 双指期间不触发点击
+      }
+      try {
+        canvas.setPointerCapture(event.pointerId)
+      } catch {
+        /* 合成事件或指针已释放时忽略 */
+      }
     })
     canvas.addEventListener('pointermove', (event) => {
+      if (this.pointers.has(event.pointerId)) {
+        this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      }
+      // 双指缩放：按两指距离变化缩放，并以两指中点为锚
+      if (this.pointers.size >= 2) {
+        const info = pinchInfo()
+        if (this.pinchDistance > 0 && info.distance > 0) {
+          const rect = canvas.getBoundingClientRect()
+          const px = info.midX - rect.left
+          const py = info.midY - rect.top
+          const before = this.scale
+          const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, this.scale * (info.distance / this.pinchDistance)))
+          this.scale = next
+          this.offsetX = px - ((px - this.offsetX) / before) * next
+          this.offsetY = py - ((py - this.offsetY) / before) * next
+          this.applyCamera()
+        }
+        this.pinchDistance = info.distance
+        return
+      }
       if (!this.dragging) return
       const dx = event.clientX - this.lastPointer.x
       const dy = event.clientY - this.lastPointer.y
@@ -253,7 +361,9 @@ export class BoardApp {
       this.applyCamera()
     })
     canvas.addEventListener('pointerup', (event) => {
-      this.dragging = false
+      this.pointers.delete(event.pointerId)
+      if (this.pointers.size < 2) this.pinchDistance = 0
+      this.dragging = this.pointers.size > 0
       if (this.moved) return
       const rect = canvas.getBoundingClientRect()
       const x = Math.floor((event.clientX - rect.left - this.offsetX) / this.scale / TILE)
@@ -390,6 +500,20 @@ export class BoardApp {
       bar.rect(cx - 16, cy + 12, 32, 4).fill(0x14110f)
       bar.rect(cx - 16, cy + 12, 32 * ratio, 4).fill(ratio > 0.5 ? 0x6fcf6a : ratio > 0.25 ? 0xd9a441 : 0xd94f3d)
       this.unitLayer.addChild(bar)
+    }
+
+    // 浮动数字（伤害 / 歼灭）：上升并淡出
+    for (const floater of this.floaters) {
+      const age = (Date.now() - floater.startAt) / FLOATER_MS
+      if (age >= 1) continue
+      const text = new PIXI.Text({
+        text: floater.text,
+        style: { fontSize: 18, fill: floater.color, fontWeight: '700', stroke: { color: 0x14110f, width: 3 } },
+      })
+      text.anchor.set(0.5)
+      text.position.set(floater.x * TILE + TILE / 2, floater.y * TILE + TILE / 2 - 14 - age * 26)
+      text.alpha = 1 - age * age
+      this.unitLayer.addChild(text)
     }
   }
 }
