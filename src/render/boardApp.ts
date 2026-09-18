@@ -1,12 +1,12 @@
 /**
- * 棋盘渲染（PixiJS 8）：只负责"把权威状态画出来 + 把点击换算成格子坐标"。
+ * 棋盘渲染（PixiJS 8，动态加载以分包）：
+ * 只负责"把权威状态画出来 + 把点击换算成格子坐标 + 播放状态变化动画"。
  * 不持有任何游戏规则，所有合法性判断都在 src/game/**。
  */
 
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js'
-import { DATA } from '../game/data'
+import type { Application, Container } from 'pixi.js'
+import { DATA, getMap } from '../game/data'
 import type { GameData } from '../game/data'
-import { getMap } from '../game/data'
 import type { GameState } from '../game/types'
 
 export const TILE = 48
@@ -27,18 +27,28 @@ const OWNER_COLORS = [0xc8503c, 0x3fa7a0, 0xd9a441, 0x8a6fd0]
 const NEUTRAL = 0x6b6255
 const MIN_SCALE = 0.5
 const MAX_SCALE = 2
+const MOVE_ANIM_MS = 220
+const FLASH_MS = 380
 
 function colorOf(hex: string): number {
   return Number.parseInt(hex.replace('#', ''), 16)
 }
 
+interface UnitSnapshot {
+  x: number
+  y: number
+  hp: number
+}
+
 export class BoardApp {
-  private app = new Application()
-  private world = new Container()
-  private terrainLayer = new Container()
-  private overlayLayer = new Container()
-  private buildingLayer = new Container()
-  private unitLayer = new Container()
+  private app!: Application
+  private world!: Container
+  private terrainLayer!: Container
+  private overlayLayer!: Container
+  private buildingLayer!: Container
+  private unitLayer!: Container
+  private pixi: typeof import('pixi.js') | null = null
+
   private view: BoardView | null = null
   private data: GameData = DATA
   private scale = 1
@@ -54,8 +64,21 @@ export class BoardApp {
   private initialized = false
   private destroyed = false
 
+  /** 动画状态：上一帧各单位的格子位置与血量 */
+  private snapshots = new Map<string, UnitSnapshot>()
+  private animFrom = new Map<string, { x: number; y: number }>()
+  private animStartedAt = 0
+  private animating = false
+  private flashes = new Map<string, number>()
+  private tickHandler: (() => void) | null = null
+
   async mount(container: HTMLElement): Promise<void> {
-    await this.app.init({
+    // 动态 import：PixiJS 单独分包，只有真正进入对局时才下载
+    const PIXI = await import('pixi.js')
+    this.pixi = PIXI
+
+    const app = new PIXI.Application()
+    await app.init({
       width: container.clientWidth || 800,
       height: container.clientHeight || 600,
       background: 0x14110f,
@@ -63,18 +86,28 @@ export class BoardApp {
       resolution: Math.min(2, globalThis.devicePixelRatio || 1),
       autoDensity: true,
     })
-    // React StrictMode 会"挂载→卸载→再挂载"：若初始化完成前已被 destroy，则直接收尾。
-    // 否则 Pixi 内部会在未初始化的 Application 上调 _cancelResize 抛错，把整棵 React 树带崩。
+    // React StrictMode 会"挂载→卸载→再挂载"：初始化期间已被 destroy 就直接收尾，
+    // 否则 Pixi 会在未初始化的 Application 上调私有方法抛错，把整棵 React 树带崩。
     if (this.destroyed) {
-      this.app.destroy(true)
+      app.destroy(true)
       return
     }
+    this.app = app
     this.initialized = true
-    this.canvas = this.app.canvas
-    container.appendChild(this.canvas)
+    this.canvas = app.canvas
+
+    this.world = new PIXI.Container()
+    this.terrainLayer = new PIXI.Container()
+    this.overlayLayer = new PIXI.Container()
+    this.buildingLayer = new PIXI.Container()
+    this.unitLayer = new PIXI.Container()
     this.world.addChild(this.terrainLayer, this.overlayLayer, this.buildingLayer, this.unitLayer)
-    this.app.stage.addChild(this.world)
+    app.stage.addChild(this.world)
+
+    container.appendChild(this.canvas)
     this.attachPointerHandlers()
+    this.tickHandler = () => this.onTick()
+    app.ticker.add(this.tickHandler)
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.resize(container))
       this.resizeObserver.observe(container)
@@ -88,7 +121,9 @@ export class BoardApp {
 
   setView(view: BoardView): void {
     this.view = view
-    if (this.initialized && !this.destroyed) this.render()
+    if (!this.initialized || this.destroyed) return
+    this.detectChanges(view.state)
+    this.render()
   }
 
   /** 格子中心 → 画布内坐标（DEV/E2E 用：让测试能点中具体格子） */
@@ -108,8 +143,63 @@ export class BoardApp {
     this.destroyed = true
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
-    // 还没 init 完成时不能调用 Application.destroy（会抛 _cancelResize）
-    if (this.initialized) this.app.destroy(true)
+    if (this.initialized) {
+      if (this.tickHandler) this.app.ticker.remove(this.tickHandler)
+      this.app.destroy(true)
+    }
+  }
+
+  /** 对比新旧状态，决定要播放的动画（移动补间 / 受击闪红） */
+  private detectChanges(state: GameState): void {
+    const now = Date.now()
+    const next = new Map<string, UnitSnapshot>()
+    let startedAnimation = false
+    for (const unit of state.units) {
+      const prev = this.snapshots.get(unit.id)
+      next.set(unit.id, { x: unit.x, y: unit.y, hp: unit.hp })
+      if (!prev) continue
+      if (prev.x !== unit.x || prev.y !== unit.y) {
+        this.animFrom.set(unit.id, { x: prev.x, y: prev.y })
+        startedAnimation = true
+      }
+      if (unit.hp < prev.hp) this.flashes.set(unit.id, now + FLASH_MS)
+    }
+    this.snapshots = next
+    if (startedAnimation) {
+      this.animStartedAt = now
+      this.animating = true
+    }
+    for (const [id, expiry] of [...this.flashes]) {
+      if (expiry <= now) this.flashes.delete(id)
+    }
+  }
+
+  private onTick(): void {
+    const now = Date.now()
+    const animating = this.animating && now - this.animStartedAt < MOVE_ANIM_MS * 1.6
+    const flashing = [...this.flashes.values()].some((expiry) => expiry > now)
+    if (!animating && !flashing) {
+      if (this.animating) {
+        this.animating = false
+        this.animFrom.clear()
+        this.render()
+      }
+      return
+    }
+    if (this.view) this.render()
+  }
+
+  /** 单位当前应画在哪（动画期间做线性插值） */
+  private unitPixel(unitId: string, x: number, y: number): { x: number; y: number } {
+    const from = this.animFrom.get(unitId)
+    if (!from || !this.animating) {
+      return { x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 }
+    }
+    const t = Math.min(1, (Date.now() - this.animStartedAt) / MOVE_ANIM_MS)
+    const eased = 1 - (1 - t) * (1 - t)
+    const px = (from.x + (x - from.x) * eased) * TILE + TILE / 2
+    const py = (from.y + (y - from.y) * eased) * TILE + TILE / 2
+    return { x: px, y: py }
   }
 
   private resize(container: HTMLElement): void {
@@ -117,7 +207,6 @@ export class BoardApp {
     const h = container.clientHeight
     if (w <= 0 || h <= 0) return
     this.app.renderer.resize(w, h)
-    // 用户还没手动拖拽/缩放时，跟随容器尺寸自动适配棋盘
     if (!this.userInteracted) this.fit(container)
   }
 
@@ -191,20 +280,23 @@ export class BoardApp {
 
   private render(): void {
     const view = this.view
+    const PIXI = this.pixi
+    if (!view || !PIXI) return
+
     this.terrainLayer.removeChildren()
     this.overlayLayer.removeChildren()
     this.buildingLayer.removeChildren()
     this.unitLayer.removeChildren()
-    if (!view) return
 
     const { state } = view
     const map = getMap(state.mapId, this.data)
     const reachable = new Set(view.reachable)
     const targets = new Set(view.targets)
     const zone = view.deployZoneIndex === null ? null : map.deployZones[view.deployZoneIndex]
+    const now = Date.now()
 
     // 地形
-    const terrain = new Graphics()
+    const terrain = new PIXI.Graphics()
     for (let y = 0; y < map.height; y += 1) {
       for (let x = 0; x < map.width; x += 1) {
         const t = this.data.terrain[map.terrain[y * map.width + x]]
@@ -214,8 +306,8 @@ export class BoardApp {
     terrain.rect(0, 0, map.width * TILE, map.height * TILE).stroke({ width: 2, color: 0x000000, alpha: 0.35 })
     this.terrainLayer.addChild(terrain)
 
-    // 叠加层：部署区 / 可达 / 可攻击 / 选中
-    const overlay = new Graphics()
+    // 叠加层
+    const overlay = new PIXI.Graphics()
     if (zone) {
       overlay
         .rect(zone.x0 * TILE, zone.y0 * TILE, (zone.x1 - zone.x0 + 1) * TILE, (zone.y1 - zone.y0 + 1) * TILE)
@@ -238,7 +330,6 @@ export class BoardApp {
     if (selectedBuilding) {
       overlay.rect(selectedBuilding.x * TILE + 1, selectedBuilding.y * TILE + 1, TILE - 2, TILE - 2).stroke({ width: 3, color: 0xf0d27a })
     }
-    // 占领进度
     for (const b of state.buildings) {
       if (!b.capture) continue
       const ratio = Math.min(1, b.capture.points / this.data.capturePoints)
@@ -254,40 +345,47 @@ export class BoardApp {
       const type = this.data.buildings[b.type]
       const index = b.owner === null ? -1 : state.players.indexOf(b.owner)
       const fill = index < 0 ? NEUTRAL : OWNER_COLORS[index % OWNER_COLORS.length]
-      const g = new Graphics()
+      const g = new PIXI.Graphics()
       g.roundRect(b.x * TILE + 6, b.y * TILE + 6, TILE - 12, TILE - 12, 6).fill(fill).stroke({ width: 2, color: 0x1a1512 })
       this.buildingLayer.addChild(g)
-      const label = new Text({
+      const label = new PIXI.Text({
         text: type.glyph,
-        style: new TextStyle({ fontSize: 20, fill: 0xf5efe2, fontWeight: '700' }),
+        style: { fontSize: 20, fill: 0xf5efe2, fontWeight: '700' },
       })
       label.anchor.set(0.5)
       label.position.set(b.x * TILE + TILE / 2, b.y * TILE + TILE / 2 - 2)
       this.buildingLayer.addChild(label)
     }
 
-    // 单位
+    // 单位（动画期间使用插值坐标）
     for (const unit of state.units) {
       const type = this.data.units[unit.type]
       const index = Math.max(0, state.players.indexOf(unit.owner))
       const color = OWNER_COLORS[index % OWNER_COLORS.length]
-      const cx = unit.x * TILE + TILE / 2
-      const cy = unit.y * TILE + TILE / 2
+      const { x: cx, y: cy } = this.unitPixel(unit.id, unit.x, unit.y)
 
-      const circle = new Graphics()
+      // 受击闪光
+      const flashExpiry = this.flashes.get(unit.id)
+      if (flashExpiry && flashExpiry > now) {
+        const halo = new PIXI.Graphics()
+        halo.circle(cx, cy - 2, TILE * 0.44).fill({ color: 0xff5a3c, alpha: 0.5 })
+        this.unitLayer.addChild(halo)
+      }
+
+      const circle = new PIXI.Graphics()
       circle.circle(cx, cy - 2, TILE * 0.34).fill(color).stroke({ width: 2, color: 0x14110f })
       if (unit.acted) circle.circle(cx, cy - 2, TILE * 0.34).fill({ color: 0x000000, alpha: 0.35 })
       this.unitLayer.addChild(circle)
 
-      const glyph = new Text({
+      const glyph = new PIXI.Text({
         text: type.glyph,
-        style: new TextStyle({ fontSize: 17, fill: 0xffffff, fontWeight: '700' }),
+        style: { fontSize: 17, fill: 0xffffff, fontWeight: '700' },
       })
       glyph.anchor.set(0.5)
       glyph.position.set(cx, cy - 3)
       this.unitLayer.addChild(glyph)
 
-      const bar = new Graphics()
+      const bar = new PIXI.Graphics()
       const ratio = Math.max(0, unit.hp) / type.hp
       bar.rect(cx - 16, cy + 12, 32, 4).fill(0x14110f)
       bar.rect(cx - 16, cy + 12, 32 * ratio, 4).fill(ratio > 0.5 ? 0x6fcf6a : ratio > 0.25 ? 0xd9a441 : 0xd94f3d)

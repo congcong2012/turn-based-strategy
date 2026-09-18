@@ -14,6 +14,7 @@ import { createRoomSession } from '../net/roomSession'
 import type { RoomSession, RoomView } from '../net/roomSession'
 import type { SignalStrategy, TransportKind } from '../net/types'
 import type { Command } from '../game/types'
+import { clearGame, defaultStorage } from '../net/gameStore'
 
 const DEV = import.meta.env.DEV
 
@@ -26,6 +27,8 @@ export interface RoomActions {
   setStrategy: (strategy: SignalStrategy) => void
   /** 发出对局指令（房主本地校验；客户端发给房主校验） */
   sendCommand: (cmd: Command) => void
+  /** 房主：跳过掉线玩家的回合 */
+  skipDisconnectedTurn: () => void
 }
 
 export interface UseRoomResult {
@@ -56,6 +59,11 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     peerCount: 0,
     game: null,
     myTurn: false,
+    paused: false,
+    pausedReason: 'none',
+    canSkipTurn: false,
+    offlinePlayers: [],
+    log: [],
   }
 }
 
@@ -139,6 +147,9 @@ export function useRoom(): UseRoomResult {
 
   const leave = useCallback(() => {
     clearLastRoom()
+    // 明确离开房间 = 放弃这一局：清掉房主侧持久化对局（刷新/关标签页不清，供重连恢复）
+    const roomCode = sessionRef.current?.getView().roomCode
+    if (roomCode) clearGame(defaultStorage(), roomCode)
     const session = sessionRef.current
     sessionRef.current = null
     void enqueueTeardown(session)
@@ -157,6 +168,7 @@ export function useRoom(): UseRoomResult {
   const setNickname = useCallback((nickname: string) => sessionRef.current?.setNickname(nickname), [])
   const startGame = useCallback(() => sessionRef.current?.startGame(), [])
   const sendCommand = useCallback((cmd: Command) => sessionRef.current?.sendCommand(cmd), [])
+  const skipDisconnectedTurn = useCallback(() => sessionRef.current?.skipDisconnectedTurn(), [])
 
 
   /** 切换信令策略：房间内切换会离开并以新策略重新加入 */
@@ -177,8 +189,8 @@ export function useRoom(): UseRoomResult {
   )
 
   const actions = useMemo<RoomActions>(
-    () => ({ join, leave, setReady, setNickname, startGame, setStrategy, sendCommand }),
-    [join, leave, setReady, setNickname, startGame, setStrategy, sendCommand],
+    () => ({ join, leave, setReady, setNickname, startGame, setStrategy, sendCommand, skipDisconnectedTurn }),
+    [join, leave, setReady, setNickname, startGame, setStrategy, sendCommand, skipDisconnectedTurn],
   )
 
   return {

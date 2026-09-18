@@ -1,6 +1,6 @@
 /** 传输层与联机协议的类型定义（M1 大厅 + M2 对局指令） */
 
-import type { Command, ErrorCode, GameState } from '../game/types'
+import type { Command, ErrorCode, GameEvent, GameState } from '../game/types'
 
 export type PeerId = string
 export type PlayerId = string
@@ -36,7 +36,7 @@ export type LobbySnapshot = {
 
 /** 线上消息（信封统一带 from = playerId，用于身份绑定与重连识别） */
 export type Wire =
-  | { t: 'game'; from: PlayerId; state: GameState }
+  | { t: 'game'; from: PlayerId; state: GameState; events?: GameEvent[] }
   | { t: 'cmd'; from: PlayerId; cmd: Command }
   | { t: 'cmdRejected'; from: PlayerId; code: ErrorCode }
   | { t: 'hello'; from: PlayerId; nickname: string; joinedAt: number }

@@ -33,6 +33,19 @@ async function gameState(page: Page) {
   }>
 }
 
+/** 读取某个格子上据点的归属 */
+async function villageOwner(page: Page, x: number, y: number) {
+  return page.evaluate(
+    ([tx, ty]) => {
+      const state = (globalThis as unknown as {
+        __atGame: { getState: () => { buildings: Array<{ x: number; y: number; owner: string | null }> } }
+      }).__atGame.getState()
+      return state.buildings.find((b) => b.x === tx && b.y === ty)?.owner ?? null
+    },
+    [x, y] as const,
+  )
+}
+
 async function setReady(page: Page) {
   await page.getByTestId('ready-button').click()
   await expect(page.getByTestId('ready-badge').first()).toHaveText('✓ 已准备')
@@ -127,6 +140,64 @@ test.describe('对局（本地传输）', () => {
 
     // 非当前玩家无法操作：甲此时点自己的单位不应产生可行动状态
     await expect(alice.getByTestId('end-turn')).toBeDisabled()
+  })
+
+  test('占领：两次占领后村落易主，战报同步', async ({ context }) => {
+    const { alice, bob } = await setupTwoPlayers(context)
+
+    // 甲在王城左侧部署，紧邻中立村落 (9,6)
+    await alice.getByTestId('deploy-sword').click()
+    await clickTile(alice, 9, 4)
+    await bob.getByTestId('deploy-sword').click()
+    await clickTile(bob, 11, 19)
+    await alice.getByTestId('deploy-done').click()
+    await bob.getByTestId('deploy-done').click()
+    await expect(alice.getByTestId('phase-label')).toHaveText('行动')
+
+    // 第 1 回合：走到村落上并占领（满血步兵 +10）
+    await clickTile(alice, 9, 4)
+    await clickTile(alice, 9, 6)
+    await expect(alice.getByTestId('capture-button')).toBeEnabled()
+    await alice.getByTestId('capture-button').click()
+    await expect(alice.getByTestId('event-log')).toContainText('占领 村落 进度 10/20')
+
+    // 换手一轮
+    await alice.getByTestId('end-turn').click()
+    await expect(bob.getByTestId('end-turn')).toBeEnabled()
+    await bob.getByTestId('end-turn').click()
+    await expect(alice.getByTestId('end-turn')).toBeEnabled()
+
+    // 第 2 回合：再次占领（+10 = 20）→ 结束回合时易主
+    await clickTile(alice, 9, 6)
+    await alice.getByTestId('capture-button').click()
+    await alice.getByTestId('end-turn').click()
+
+    await expect
+      .poll(async () => villageOwner(alice, 9, 6), { timeout: 15_000 })
+      .toBe('p-a')
+    await expect(alice.getByTestId('event-log')).toContainText('占领了 村落')
+    // 战报经 P2P 同步给对手
+    await expect(bob.getByTestId('event-log')).toContainText('占领了 村落')
+  })
+
+  test('投降：双方都进入结算界面，可返回大厅', async ({ context }) => {
+    const { alice, bob } = await setupTwoPlayers(context)
+    await alice.getByTestId('deploy-sword').click()
+    await clickTile(alice, 11, 4)
+    await bob.getByTestId('deploy-sword').click()
+    await clickTile(bob, 11, 19)
+    await alice.getByTestId('deploy-done').click()
+    await bob.getByTestId('deploy-done').click()
+    await expect(alice.getByTestId('phase-label')).toHaveText('行动')
+
+    // 乙认输（不受回合归属限制）
+    await bob.getByTestId('resign-button').click()
+    await expect(alice.getByTestId('game-over')).toContainText('胜利')
+    await expect(bob.getByTestId('game-over')).toContainText('败北')
+    await expect(alice.getByTestId('game-over')).toContainText('对手投降')
+
+    await alice.getByTestId('back-to-lobby').click()
+    await expect(alice.getByTestId('join-panel')).toBeVisible()
   })
 
   test('生产：兵营出兵在下一回合出场', async ({ context }) => {

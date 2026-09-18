@@ -181,3 +181,17 @@ button.block { width: 100%; margin-bottom: 8px; }
   .game-panel { width: auto; flex: 0 0 auto; border-left: none; border-top: 1px solid var(--line); }
   .board-host { min-height: 46vh; }
 }
+.pause-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: #3a2a1c; border-bottom: 1px solid #6b4a2a; color: #f0d9b8;
+  padding: 8px 14px; font-size: 13px;
+}
+.pause-banner button { padding: 5px 10px; font-size: 12px; }
+
+.pause-banner.soft { background: #23231a; border-bottom-color: #4a4a2a; color: #e6dcae; }
+.log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.log-list li {
+  font-size: 12px; color: var(--muted); line-height: 1.45;
+  border-left: 2px solid var(--line); padding-left: 8px;
+}
+.log-list li:first-child { color: var(--text); border-left-color: var(--gold); }

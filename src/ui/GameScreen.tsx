@@ -76,9 +76,11 @@ export function GameScreen({ view, actions }: GameScreenProps) {
     setSelectedBuildingId(null)
   }, [])
 
+  const frozen = view.pausedReason === 'host-offline'
+
   const onTileClick = useCallback(
     (x: number, y: number) => {
-      if (isOver) return
+      if (isOver || frozen) return
 
       if (isDeploy) {
         if (!armedType) {
@@ -134,7 +136,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
 
       clearSelection()
     },
-    [actions, armedType, clearSelection, game, isDeploy, isOver, myDeploy?.done, reachable, selectedUnit, targets, view.myTurn, view.selfId],
+    [actions, armedType, clearSelection, frozen, game, isDeploy, isOver, myDeploy?.done, reachable, selectedUnit, targets, view.myTurn, view.selfId],
   )
 
   const canCapture =
@@ -170,6 +172,27 @@ export function GameScreen({ view, actions }: GameScreenProps) {
           离开
         </button>
       </header>
+
+      {view.paused ? (
+        <div className="pause-banner" data-testid="pause-banner">
+          <span>
+            {view.pausedReason === 'host-offline'
+              ? '房主已断线，游戏暂停，等待其重连…（刷新页面不影响，房主回来后自动继续）'
+              : '对手已断线，等待重连…（对局与你的操作都已保留）'}
+          </span>
+          {view.canSkipTurn ? (
+            <button type="button" data-testid="skip-turn" onClick={() => actions.skipDisconnectedTurn()}>
+              跳过其回合
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!view.paused && view.offlinePlayers.length > 0 ? (
+        <div className="pause-banner soft" data-testid="offline-hint">
+          <span>{view.offlinePlayers.map((p) => nameOf(view, p)).join('、')} 已断线，等待重连…（席位与部队都已保留）</span>
+        </div>
+      ) : null}
 
       <div className="game-body">
         <BoardCanvas
@@ -208,7 +231,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
                 type="button"
                 className="primary block"
                 data-testid="deploy-done"
-                disabled={!!myDeploy?.done || (myDeploy?.placed ?? 0) < 1}
+                disabled={!!myDeploy?.done || (myDeploy?.placed ?? 0) < 1 || frozen}
                 onClick={() => actions.sendCommand({ type: 'deployDone' })}
               >
                 {myDeploy?.done ? '等待对手…' : '完成部署'}
@@ -217,6 +240,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
                 {view.players.map((p) => (
                   <span key={p.playerId} className="block">
                     {p.nickname}：{game.deploy[p.playerId]?.done ? '已确认' : '部署中'}
+                    {p.connected ? '' : '（已断线）'}
                   </span>
                 ))}
               </p>
@@ -244,13 +268,22 @@ export function GameScreen({ view, actions }: GameScreenProps) {
                   type="button"
                   className="primary block"
                   data-testid="end-turn"
-                  disabled={!view.myTurn}
+                  disabled={!view.myTurn || frozen}
                   onClick={() => {
                     clearSelection()
                     actions.sendCommand({ type: 'endTurn' })
                   }}
                 >
                   结束回合
+                </button>
+                <button
+                  type="button"
+                  className="block"
+                  data-testid="resign-button"
+                  disabled={isOver}
+                  onClick={() => actions.sendCommand({ type: 'resign' })}
+                >
+                  认输
                 </button>
               </section>
 
@@ -307,6 +340,17 @@ export function GameScreen({ view, actions }: GameScreenProps) {
                       </button>
                     ))}
                   </div>
+                </section>
+              ) : null}
+
+              {view.log.length > 0 ? (
+                <section data-testid="event-log">
+                  <h2>战报</h2>
+                  <ol className="log-list">
+                    {[...view.log].reverse().slice(0, 12).map((line, index) => (
+                      <li key={view.log.length - index}>{line}</li>
+                    ))}
+                  </ol>
                 </section>
               ) : null}
 

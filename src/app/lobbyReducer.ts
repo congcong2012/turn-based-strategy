@@ -61,6 +61,17 @@ export function upsertPlayer(
   return recompute({ ...lobby, players })
 }
 
+/** 对局进行中掉线：保留席位，只标记为离线（GDD 8.5） */
+export function markDisconnected(lobby: LobbySnapshot, playerId: string): LobbySnapshot {
+  const players = lobby.players.map((p) => (p.playerId === playerId ? { ...p, connected: false } : p))
+  return recompute({ ...lobby, players })
+}
+
+export function markConnected(lobby: LobbySnapshot, playerId: string): LobbySnapshot {
+  const players = lobby.players.map((p) => (p.playerId === playerId ? { ...p, connected: true } : p))
+  return recompute({ ...lobby, players })
+}
+
 export function removePlayer(lobby: LobbySnapshot, playerId: string): LobbySnapshot {
   return recompute({ ...lobby, players: lobby.players.filter((p) => p.playerId !== playerId) })
 }

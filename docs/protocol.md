@@ -22,7 +22,7 @@
 | `roomFull` | 房主 → 单播 | `from` | 房间已满，被拒玩家自动退回加入界面 |
 | `startHint` | 房主 → 全体 | `from` | 开始游戏提示（M1 只提示，M2 起改为进入 DEPLOY） |
 | `bye` | 双向 | `from` | 显式离开 |
-| `game` | 房主 → 全体/单播 | `from, state: GameState` | **M2 权威对局状态**：每次指令通过后广播；新玩家加入/重连时单播补发 |
+| `game` | 房主 → 全体/单播 | `from, state: GameState, events?: GameEvent[]` | **权威对局状态**：每次指令通过后广播；新玩家加入/重连时单播补发；`events` 供客户端渲染战报 |
 | `cmd` | 客户端 → 房主 | `from, cmd: Command` | 指令意图（房主校验后才会生效） |
 | `cmdRejected` | 房主 → 单播 | `from, code: ErrorCode` | 指令被拒绝，状态不变 |
 
@@ -105,6 +105,25 @@ M1 的"服务端校验"体现在房主侧：
 
 M2 起扩展为 GDD 8.6 的完整指令集与错误码
 （`move/attack/capture/produce/wait/endTurn` + `NOT_YOUR_TURN / OUT_OF_RANGE / ...`）。
+
+## 6. 断线重连时序（M3）
+
+```
+房主掉线/刷新
+  客户端：房主 peer 消失 → pausedReason = 'host-offline' → 冻结全部输入
+  房主重新进入房间（同一 playerId）
+    → 收到对手 hello → 3 秒无 hostHello → 自任房主并广播 hostHello
+    → 从 localStorage 读回对局（要求所有玩家都已回到房间，且对局未结束）
+    → 广播 lobby + game（完整状态）→ 客户端解除冻结，继续下棋
+
+对手掉线
+  房主：该 playerId 标记 connected=false（席位保留，不踢出）
+    → 若正是他的回合：pausedReason = 'player-offline'，房主 UI 出现"跳过其回合"
+  对手回来 → hello → 标记在线 + 单播完整状态 → 继续
+
+明确离开房间（"离开"/"返回大厅"）
+  → 清除本地持久化对局；刷新或关标签页则保留，用于恢复
+```
 
 ## 5. 单元测试覆盖
 

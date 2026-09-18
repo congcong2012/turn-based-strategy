@@ -7,6 +7,7 @@
 
 import {
   createElection,
+  setPhase as electionSetPhase,
   gone as electionGone,
   hostHello as electionHostHello,
   isSelfHost,
@@ -18,15 +19,22 @@ import {
   createLobby,
   hasPlayer,
   isFull,
+  markConnected,
+  markDisconnected,
   removePlayer,
   setNickname as lobbySetNickname,
   setReady as lobbySetReady,
   upsertPlayer,
 } from '../app/lobbyReducer'
 import { isValidRoomCode, normalizeRoomCode } from '../app/roomCode'
+import { defaultStorage, loadGame, saveGame } from './gameStore'
+import type { GameStorage } from './gameStore'
 import { applyCommand } from '../game/commands'
+import { describeEvents } from '../game/logText'
+import type { LogContext } from '../game/logText'
 import { createGame } from '../game/state'
-import type { Command, GameState } from '../game/types'
+import { buildingType, unitType } from '../game/data'
+import type { Command, GameEvent, GameState } from '../game/types'
 import type {
   LobbyPlayer,
   LobbySnapshot,
@@ -67,6 +75,15 @@ export interface RoomView {
   game: GameState | null
   /** 当前是否轮到我行动 */
   myTurn: boolean
+  /** M3：对局是否被暂停（房主掉线，或轮到掉线玩家） */
+  paused: boolean
+  pausedReason: 'none' | 'host-offline' | 'player-offline'
+  /** M3：房主可以把掉线玩家的回合跳过 */
+  canSkipTurn: boolean
+  /** M3：掉线中的玩家（对局进行时保留席位） */
+  offlinePlayers: PlayerId[]
+  /** M3：中文战报（最新在最后） */
+  log: string[]
 }
 
 export interface RoomSessionOptions {
@@ -77,12 +94,15 @@ export interface RoomSessionOptions {
   transportFactory: TransportFactory
   now?: () => number
   tickMs?: number
+  /** 房主侧对局持久化用的存储（默认 localStorage；测试可注入内存实现） */
+  storage?: GameStorage | null
   onChange?: (view: RoomView) => void
 }
 
 export interface RoomSession {
   getView: () => RoomView
   join: (roomCode: string) => Promise<void>
+  /** 明确离开房间：会清掉房主侧的持久化对局（刷新/关闭标签页请用 dispose） */
   leave: () => Promise<void>
   setReady: (ready: boolean) => void
   setNickname: (nickname: string) => void
@@ -90,6 +110,8 @@ export interface RoomSession {
   startGame: () => void
   /** 任何玩家：发出对局指令（房主本地校验，客户端发给房主校验） */
   sendCommand: (cmd: Command) => void
+  /** 房主：跳过掉线玩家的回合（仅当其确实掉线时可用） */
+  skipDisconnectedTurn: () => void
   dispose: () => void
 }
 
@@ -97,6 +119,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   const now = options.now ?? (() => Date.now())
   const tickMs = options.tickMs ?? TICK_MS
   const selfId = options.playerId
+  const storage = options.storage === undefined ? defaultStorage() : options.storage
 
   let status: TransportStatus = 'idle'
   let statusDetail: string | null = null
@@ -116,6 +139,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   let lastLobbyHost: PlayerId | null = null
   let lastLobbyRev = -1
   let game: GameState | null = null
+  let log: string[] = []
 
   const peerToPlayer = new Map<PeerId, PlayerId>()
   const playerToPeer = new Map<PlayerId, PeerId>()
@@ -151,11 +175,41 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     return online.length >= 2 && online.every((p) => p.ready)
   }
 
+  function isPlayerConnected(playerId: PlayerId): boolean {
+    if (!lobby) return election?.records[playerId]?.connected ?? false
+    return lobby.players.find((p) => p.playerId === playerId)?.connected ?? false
+  }
+
   function buildView(): RoomView {
     const players = currentPlayers()
     const me = players.find((p) => p.playerId === selfId)
     const hostId = election?.hostId ?? null
     const hostRec = hostId && election ? election.records[hostId] : undefined
+
+    // 断线暂停判定：房主不在 → 客户端整体冻结；轮到掉线玩家 → 对局停滞
+    const hostOffline =
+      !isHost() && hostId !== null && game !== null && !(election?.records[hostId]?.connected ?? false)
+    const currentId = game ? (game.players[game.turnIndex] ?? null) : null
+    const currentOffline =
+      !!game && game.phase !== 'GAME_OVER' && currentId !== null && !isPlayerConnected(currentId)
+    const pausedReason: RoomView['pausedReason'] = hostOffline
+      ? 'host-offline'
+      : currentOffline
+        ? 'player-offline'
+        : 'none'
+
+    return buildViewWith({ players, me, hostId, hostRec, pausedReason, currentOffline })
+  }
+
+  function buildViewWith(input: {
+    players: LobbyPlayer[]
+    me: LobbyPlayer | undefined
+    hostId: PlayerId | null
+    hostRec: { nickname: string } | undefined
+    pausedReason: RoomView['pausedReason']
+    currentOffline: boolean
+  }): RoomView {
+    const { players, me, hostId, hostRec, pausedReason, currentOffline } = input
     return {
       status,
       statusDetail,
@@ -170,17 +224,43 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       canStart: canStart(),
       isHost: isHost(),
       hostNickname: hostId === selfId ? nickname : (hostRec?.nickname ?? null),
+      // 注：paused/pausedReason/canSkipTurn/offlinePlayers 在下方 return 中补齐
       notice,
       error,
       peerCount: transport ? transport.getPeers().length : 0,
       game,
       myTurn: game !== null && game.phase === 'PLAYING' && game.players[game.turnIndex] === selfId,
+      paused: pausedReason !== 'none',
+      pausedReason,
+      canSkipTurn: isHost() && currentOffline && game?.phase === 'PLAYING',
+      offlinePlayers: players.filter((p) => !p.connected).map((p) => p.playerId),
+      log,
     }
   }
 
-  function broadcastGame(): void {
+  /** 把内核事件翻译成战报（用"变更前"的状态解析已被歼灭单位/已易主据点的名字） */
+  function appendLog(events: GameEvent[], before: GameState | null, after: GameState): void {
+    if (events.length === 0) return
+    const nameOf = (playerId: PlayerId): string =>
+      lobby?.players.find((p) => p.playerId === playerId)?.nickname ?? (playerId === selfId ? nickname : playerId.slice(0, 6))
+    const ctx: LogContext = {
+      unitName: (unitId) => {
+        const unit = before?.units.find((u) => u.id === unitId) ?? after.units.find((u) => u.id === unitId)
+        if (!unit) return '某部队'
+        return unitType(unit.type).name + '·' + nameOf(unit.owner)
+      },
+      buildingName: (buildingId) => {
+        const building = before?.buildings.find((b) => b.id === buildingId) ?? after.buildings.find((b) => b.id === buildingId)
+        return building ? buildingType(building.type).name : '据点'
+      },
+      playerName: nameOf,
+    }
+    log = [...log, ...describeEvents(events, ctx)].slice(-60)
+  }
+
+  function broadcastGame(events: GameEvent[] = []): void {
     if (!game || !isHost()) return
-    transport?.send({ t: 'game', from: selfId, state: game })
+    transport?.send({ t: 'game', from: selfId, state: game, events })
   }
 
   /** 房主：执行一条指令（本地或来自客户端的意图），并把结果广播出去 */
@@ -196,8 +276,11 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       emit()
       return
     }
+    const before = game
     game = result.state
-    broadcastGame()
+    appendLog(result.events, before, game)
+    if (roomCode) saveGame(storage, roomCode, game)
+    broadcastGame(result.events)
     emit()
   }
 
@@ -230,6 +313,27 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     transport?.send({ t: 'lobby', from: selfId, lobby })
   }
 
+  /**
+   * 房主重连后恢复上一局：仅当持久化对局里的所有玩家都已回到房间时才恢复，
+   * 恢复后立即把完整状态广播出去，客户端无缝继续。
+   */
+  function maybeRestoreGame(): void {
+    if (!isHost() || game !== null || !roomCode || !lobby) return
+    const stored = loadGame(storage, roomCode)
+    if (!stored || stored.phase === 'GAME_OVER') return
+    const roster = new Set(lobby.players.filter((p) => p.connected).map((p) => p.playerId))
+    if (!stored.players.every((p) => roster.has(p))) return
+    game = stored
+    if (election) {
+      // GAME_OVER 已在上面排除，这里只可能是 DEPLOY / PLAYING
+      election = electionSetPhase(election, stored.phase === 'DEPLOY' ? 'DEPLOY' : 'PLAYING')
+    }
+    if (lobby) lobby = { ...lobby, phase: stored.phase }
+    notice = '已恢复上一局对局（断线重连）'
+    broadcastGame()
+    broadcastLobby()
+  }
+
   /** 从选举记录重建权威名单（接管房主时用；其他人的准备状态未知，重置为未准备） */
   function lobbyFromRecords(): LobbySnapshot {
     const snapshot = roomCode ?? ''
@@ -253,6 +357,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         lobby = lobbyFromRecords()
         notice = '你已成为房主'
         broadcastLobby()
+        maybeRestoreGame()
       } else if (effect.type === 'steppedDown') {
         role = 'client'
         lobby = null
@@ -286,8 +391,11 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         if (isHost() && lobby) {
           // 立即告诉新玩家谁是房主，避免对方空等 3 秒后误自任房主
           transport?.send({ t: 'hostHello', from: selfId, hostId: selfId }, peerId)
+          // 若是掉线玩家回来了：恢复席位（对局进行中我们保留了他的座位）
+          lobby = markConnected(lobby, msg.from)
           // 若对局已开始，补发完整快照（断线重连 / 中途加入）
           if (game) transport?.send({ t: 'game', from: selfId, state: game }, peerId)
+          else maybeRestoreGame()
           const known = hasPlayer(lobby, msg.from)
           if (!known && isFull(lobby)) {
             transport?.send({ t: 'roomFull', from: selfId }, peerId)
@@ -313,8 +421,21 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       }
       case 'game': {
         if (!isHost()) {
+          if (msg.events && msg.events.length > 0) appendLog(msg.events, game, msg.state)
           game = msg.state
-          if (lobby) lobby = { ...lobby, phase: msg.state.phase === 'GAME_OVER' ? 'GAME_OVER' : msg.state.phase === 'DEPLOY' ? 'DEPLOY' : 'PLAYING' }
+          // 对局期间禁止主机迁移：客户端只等待房主回来，不接管（GDD 8.5）
+          if (election) {
+            election = electionSetPhase(
+              election,
+              msg.state.phase === 'GAME_OVER' ? 'GAME_OVER' : msg.state.phase === 'DEPLOY' ? 'DEPLOY' : 'PLAYING',
+            )
+          }
+          if (lobby) {
+            lobby = {
+              ...lobby,
+              phase: msg.state.phase === 'GAME_OVER' ? 'GAME_OVER' : msg.state.phase === 'DEPLOY' ? 'DEPLOY' : 'PLAYING',
+            }
+          }
         }
         break
       }
@@ -389,7 +510,9 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     playerToPeer.delete(playerId)
     if (election) election = electionGone(election, playerId).state
     if (isHost() && lobby) {
-      lobby = removePlayer(lobby, playerId)
+      const inGame = game !== null && (game.phase === 'DEPLOY' || game.phase === 'PLAYING')
+      // 对局进行中：保留席位等待重连；未开局：直接移出名单
+      lobby = inGame ? markDisconnected(lobby, playerId) : removePlayer(lobby, playerId)
       broadcastLobby()
     }
     emit()
@@ -436,6 +559,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     role = 'idle'
     roomCode = null
     ready = false
+    log = []
     lastLobbyHost = null
     lastLobbyRev = -1
     status = 'idle'
@@ -463,6 +587,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       ready = false
       lobby = null
       game = null
+      log = []
       lastLobbyHost = null
       lastLobbyRev = -1
       helloAttempts = 0
@@ -522,11 +647,20 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         return
       }
       game = createGame('ancient_01', order)
+      if (election) election = electionSetPhase(election, 'DEPLOY')
       if (lobby) lobby = { ...lobby, phase: 'DEPLOY' }
       notice = '进入部署阶段：在己方部署区放置初始部队'
       transport?.send({ t: 'game', from: selfId, state: game })
       broadcastLobby()
       emit()
+    },
+
+    skipDisconnectedTurn(): void {
+      if (!isHost() || !game || game.phase !== 'PLAYING') return
+      const current = game.players[game.turnIndex]
+      if (isPlayerConnected(current)) return
+      notice = '已跳过掉线玩家的回合'
+      runCommand(current, { type: 'endTurn' })
     },
 
     sendCommand(cmd: Command): void {

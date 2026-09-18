@@ -130,6 +130,31 @@ applyCommand(state, playerId, cmd, data) → { ok: true, state, events } | { ok:
 它不判断任何合法性——点哪里都交给 `applyCommand` 拒绝。这样渲染层可以随时替换/优化。
 DEV 下会暴露 `window.__atBoard.project(x,y)`（格子→屏幕坐标），让 E2E 能用**真实鼠标点击**驱动 canvas。
 
+### ADR-11：断线重连 = 房主侧状态持久化 + 暂停等待（不做主机迁移）
+
+**问题**：房主浏览器刷新后，内存里的权威状态就没了；客户端不能接管（GDD 8.5 游戏内不做主机迁移）。
+
+**方案**：只有房主写一份持久化对局（`src/net/gameStore.ts`，localStorage，
+键 `ancient-tactics.game.<房间码>`），每次指令通过后落盘：
+
+| 场景 | 行为 |
+| --- | --- |
+| 房主刷新/崩溃后回来 | 自动重进房间 → 3 秒当选房主 → 读回持久化对局 → 广播 lobby + game，客户端无缝继续 |
+| 恢复条件 | 持久化对局里的**所有玩家都已回到房间**才恢复；对局已结束（GAME_OVER）不恢复 |
+| 对手刷新 | 房主把该席位标记为离线（**不移出名单**），对手回来后标记在线 + 单播完整状态 |
+| 轮到掉线玩家 | 对局停滞：双方看到"对手已断线"；房主可"跳过其回合" |
+| 房主掉线中 | 客户端整体冻结（`pausedReason = 'host-offline'`），只等待房主回来，**不抢房主** |
+| 明确离开房间 | 清除持久化对局（刷新/关标签页不清，否则无法恢复） |
+
+选举阶段（`hostElection.phase`）随对局阶段切换成 DEPLOY/PLAYING，从而自动落实"LOBBY 之外不允许接管"。
+
+### ADR-12：动画、战报与分包
+
+- 渲染层对比新旧状态自行决定动画：单位位置变化 → 220ms 补间；掉血 → 380ms 红色光环；
+- PixiJS 改为**动态 import**：主包从 530KB 降到 281KB（gzip 88KB），只在真正进入对局时加载；
+- 战报（`src/game/logText.ts`）是纯函数：房主与客户端各自把 `GameEvent` 翻译成中文，
+  客户端通过 `game.events` 拿到同一条事件流。
+
 ## 2. 模块分层
 
 ```
@@ -144,7 +169,8 @@ src/
 │  ├─ movement.ts                Dijkstra 可达范围 / 路径 / 射程
 │  ├─ combat.ts                  确定性伤害公式与反击判定
 │  ├─ state.ts                   回合状态机（START/RESOLVE/HANDOVER）、经济、胜负、计分
-│  └─ commands.ts                指令校验与执行（房主权威的唯一入口）
+│  ├─ commands.ts                指令校验与执行（房主权威的唯一入口）
+│  └─ logText.ts                 事件 → 中文战报（纯函数）
 ├─ render/
 │  └─ boardApp.ts                PixiJS 棋盘渲染 + 相机 + 点击换算
 ├─ data/                         数据驱动：units/terrain/buildings/matchup/rules/maps/*.json
@@ -153,6 +179,7 @@ src/
 │  ├─ createTransport.ts         传输工厂（trystero | local）
 │  ├─ trysteroTransport.ts       Trystero 实现（含策略动态 import、DEV 调试钩子）
 │  ├─ localTransport.ts          BroadcastChannel 实现（DEV/测试）
+│  ├─ gameStore.ts               房主侧对局持久化（断线重连）
 │  └─ roomSession.ts             ★ 房间状态机：选举 + 权威名单 + 协议编排（无 React 依赖）
 └─ app/
    ├─ roomCode.ts                房间码归一化 / 校验 / 随机生成
