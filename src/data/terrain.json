@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "terrains": [
+    {
+      "id": "plain",
+      "name": "平原",
+      "glyph": ".",
+      "moveCost": {
+        "foot": 1,
+        "horse": 1,
+        "siege": 2
+      },
+      "defense": 0,
+      "color": "#4e6b3d"
+    },
+    {
+      "id": "road",
+      "name": "道路",
+      "glyph": "=",
+      "moveCost": {
+        "foot": 1,
+        "horse": 1,
+        "siege": 1
+      },
+      "defense": 0,
+      "color": "#8b7a58"
+    },
+    {
+      "id": "forest",
+      "name": "森林",
+      "glyph": "^",
+      "moveCost": {
+        "foot": 2,
+        "horse": 3,
+        "siege": 3
+      },
+      "defense": 0.25,
+      "color": "#2f4a2b"
+    },
+    {
+      "id": "mountain",
+      "name": "山地",
+      "glyph": "A",
+      "moveCost": {
+        "foot": 2,
+        "horse": null,
+        "siege": null
+      },
+      "defense": 0.35,
+      "color": "#6d6455"
+    },
+    {
+      "id": "river",
+      "name": "河流",
+      "glyph": "~",
+      "moveCost": {
+        "foot": null,
+        "horse": null,
+        "siege": null
+      },
+      "defense": 0,
+      "color": "#2b5d7a"
+    },
+    {
+      "id": "building",
+      "name": "据点",
+      "glyph": "B",
+      "moveCost": {
+        "foot": 1,
+        "horse": 1,
+        "siege": 2
+      },
+      "defense": 0.3,
+      "color": "#7d6a45"
+    }
+  ]
+}

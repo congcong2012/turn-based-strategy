@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "capturePoints": 20,
+  "buildings": [
+    {
+      "id": "hq",
+      "name": "王城",
+      "glyph": "城",
+      "income": 2000,
+      "repair": 20,
+      "produce": false
+    },
+    {
+      "id": "barracks",
+      "name": "兵营",
+      "glyph": "营",
+      "income": 500,
+      "repair": 20,
+      "produce": true
+    },
+    {
+      "id": "village",
+      "name": "村落",
+      "glyph": "村",
+      "income": 500,
+      "repair": 20,
+      "produce": false
+    }
+  ]
+}

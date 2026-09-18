@@ -27,7 +27,7 @@ export default defineConfig({
   projects: [
     {
       name: 'local',
-      testMatch: /local\.spec\.ts/,
+      testMatch: /(local|game)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], baseURL: DEV_URL },
     },
     {

@@ -24,6 +24,9 @@ import {
   upsertPlayer,
 } from '../app/lobbyReducer'
 import { isValidRoomCode, normalizeRoomCode } from '../app/roomCode'
+import { applyCommand } from '../game/commands'
+import { createGame } from '../game/state'
+import type { Command, GameState } from '../game/types'
 import type {
   LobbyPlayer,
   LobbySnapshot,
@@ -60,6 +63,10 @@ export interface RoomView {
   notice: string | null
   error: string | null
   peerCount: number
+  /** M2：房主创建对局后，客户端会持续收到权威状态 */
+  game: GameState | null
+  /** 当前是否轮到我行动 */
+  myTurn: boolean
 }
 
 export interface RoomSessionOptions {
@@ -79,7 +86,10 @@ export interface RoomSession {
   leave: () => Promise<void>
   setReady: (ready: boolean) => void
   setNickname: (nickname: string) => void
+  /** 房主：LOBBY → DEPLOY，创建权威对局状态 */
   startGame: () => void
+  /** 任何玩家：发出对局指令（房主本地校验，客户端发给房主校验） */
+  sendCommand: (cmd: Command) => void
   dispose: () => void
 }
 
@@ -105,6 +115,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   let disposed = false
   let lastLobbyHost: PlayerId | null = null
   let lastLobbyRev = -1
+  let game: GameState | null = null
 
   const peerToPlayer = new Map<PeerId, PlayerId>()
   const playerToPeer = new Map<PlayerId, PeerId>()
@@ -162,7 +173,32 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       notice,
       error,
       peerCount: transport ? transport.getPeers().length : 0,
+      game,
+      myTurn: game !== null && game.phase === 'PLAYING' && game.players[game.turnIndex] === selfId,
     }
+  }
+
+  function broadcastGame(): void {
+    if (!game || !isHost()) return
+    transport?.send({ t: 'game', from: selfId, state: game })
+  }
+
+  /** 房主：执行一条指令（本地或来自客户端的意图），并把结果广播出去 */
+  function runCommand(playerId: PlayerId, cmd: Command, peerId?: PeerId): void {
+    if (!game || !isHost()) return
+    if (game.phase === 'DEPLOY' && cmd.type === 'deployDone') {
+      // 允许房主/客户端在部署阶段随时确认
+    }
+    const result = applyCommand(game, playerId, cmd)
+    if (!result.ok) {
+      if (peerId) transport?.send({ t: 'cmdRejected', from: selfId, code: result.code }, peerId)
+      else error = '指令被拒绝：' + result.code
+      emit()
+      return
+    }
+    game = result.state
+    broadcastGame()
+    emit()
   }
 
   function emit(): void {
@@ -250,6 +286,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         if (isHost() && lobby) {
           // 立即告诉新玩家谁是房主，避免对方空等 3 秒后误自任房主
           transport?.send({ t: 'hostHello', from: selfId, hostId: selfId }, peerId)
+          // 若对局已开始，补发完整快照（断线重连 / 中途加入）
+          if (game) transport?.send({ t: 'game', from: selfId, state: game }, peerId)
           const known = hasPlayer(lobby, msg.from)
           if (!known && isFull(lobby)) {
             transport?.send({ t: 'roomFull', from: selfId }, peerId)
@@ -267,6 +305,21 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
           election = result.state
           applyEffects(result.effects)
         }
+        break
+      }
+      case 'cmd': {
+        if (isHost()) runCommand(msg.from, msg.cmd, peerId)
+        break
+      }
+      case 'game': {
+        if (!isHost()) {
+          game = msg.state
+          if (lobby) lobby = { ...lobby, phase: msg.state.phase === 'GAME_OVER' ? 'GAME_OVER' : msg.state.phase === 'DEPLOY' ? 'DEPLOY' : 'PLAYING' }
+        }
+        break
+      }
+      case 'cmdRejected': {
+        error = '指令被拒绝：' + msg.code
         break
       }
       case 'lobby': {
@@ -379,6 +432,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     transport = null
     election = null
     lobby = null
+    game = null
     role = 'idle'
     roomCode = null
     ready = false
@@ -408,6 +462,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       role = 'joining'
       ready = false
       lobby = null
+      game = null
       lastLobbyHost = null
       lastLobbyRev = -1
       helloAttempts = 0
@@ -460,9 +515,30 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
     startGame(): void {
       if (!isHost() || !canStart()) return
-      notice = '全员已准备 —— 对局将在 M2 进入部署阶段（本里程碑只做提示）'
-      transport?.send({ t: 'startHint', from: selfId })
+      const order = (lobby?.players ?? []).filter((p) => p.connected).map((p) => p.playerId)
+      if (order.length < 2) {
+        error = '至少需要 2 名玩家才能开始'
+        emit()
+        return
+      }
+      game = createGame('ancient_01', order)
+      if (lobby) lobby = { ...lobby, phase: 'DEPLOY' }
+      notice = '进入部署阶段：在己方部署区放置初始部队'
+      transport?.send({ t: 'game', from: selfId, state: game })
+      broadcastLobby()
       emit()
+    },
+
+    sendCommand(cmd: Command): void {
+      if (!game) return
+      if (isHost()) {
+        runCommand(selfId, cmd)
+        return
+      }
+      const hostPeer = election?.hostId ? playerToPeer.get(election.hostId) : undefined
+      const wire = { t: 'cmd' as const, from: selfId, cmd }
+      if (hostPeer) transport?.send(wire, hostPeer)
+      else transport?.send(wire)
     },
 
     dispose(): void {

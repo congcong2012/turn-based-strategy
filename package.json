@@ -19,6 +19,7 @@
     "@trystero-p2p/core": "^0.25.4",
     "@trystero-p2p/mqtt": "^0.25.4",
     "@trystero-p2p/torrent": "^0.25.4",
+    "pixi.js": "^8.21.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

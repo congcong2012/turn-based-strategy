@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "units": [
+    {
+      "id": "sword",
+      "name": "刀盾兵",
+      "glyph": "刀",
+      "hp": 100,
+      "move": 3,
+      "moveType": "foot",
+      "rangeMin": 1,
+      "rangeMax": 1,
+      "attack": "direct",
+      "counter": true,
+      "capture": true,
+      "cost": 1000
+    },
+    {
+      "id": "spear",
+      "name": "长枪兵",
+      "glyph": "枪",
+      "hp": 100,
+      "move": 3,
+      "moveType": "foot",
+      "rangeMin": 1,
+      "rangeMax": 1,
+      "attack": "direct",
+      "counter": true,
+      "capture": true,
+      "cost": 1000
+    },
+    {
+      "id": "bow",
+      "name": "弓兵",
+      "glyph": "弓",
+      "hp": 90,
+      "move": 3,
+      "moveType": "foot",
+      "rangeMin": 1,
+      "rangeMax": 2,
+      "attack": "direct",
+      "counter": true,
+      "capture": false,
+      "cost": 1200
+    },
+    {
+      "id": "lightCav",
+      "name": "轻骑兵",
+      "glyph": "轻",
+      "hp": 90,
+      "move": 6,
+      "moveType": "horse",
+      "rangeMin": 1,
+      "rangeMax": 1,
+      "attack": "direct",
+      "counter": true,
+      "capture": false,
+      "cost": 1800
+    },
+    {
+      "id": "heavyCav",
+      "name": "重骑兵",
+      "glyph": "重",
+      "hp": 120,
+      "move": 6,
+      "moveType": "horse",
+      "rangeMin": 1,
+      "rangeMax": 1,
+      "attack": "direct",
+      "counter": true,
+      "capture": false,
+      "cost": 4000
+    },
+    {
+      "id": "catapult",
+      "name": "投石车",
+      "glyph": "砲",
+      "hp": 90,
+      "move": 3,
+      "moveType": "siege",
+      "rangeMin": 2,
+      "rangeMax": 3,
+      "attack": "indirect",
+      "counter": false,
+      "capture": false,
+      "cost": 3000
+    }
+  ]
+}

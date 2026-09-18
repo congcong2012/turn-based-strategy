@@ -13,6 +13,7 @@ import { transportFactoryFor } from '../net/createTransport'
 import { createRoomSession } from '../net/roomSession'
 import type { RoomSession, RoomView } from '../net/roomSession'
 import type { SignalStrategy, TransportKind } from '../net/types'
+import type { Command } from '../game/types'
 
 const DEV = import.meta.env.DEV
 
@@ -23,6 +24,8 @@ export interface RoomActions {
   setNickname: (nickname: string) => void
   startGame: () => void
   setStrategy: (strategy: SignalStrategy) => void
+  /** 发出对局指令（房主本地校验；客户端发给房主校验） */
+  sendCommand: (cmd: Command) => void
 }
 
 export interface UseRoomResult {
@@ -51,6 +54,8 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     notice: null,
     error: null,
     peerCount: 0,
+    game: null,
+    myTurn: false,
   }
 }
 
@@ -151,6 +156,7 @@ export function useRoom(): UseRoomResult {
   const setReady = useCallback((ready: boolean) => sessionRef.current?.setReady(ready), [])
   const setNickname = useCallback((nickname: string) => sessionRef.current?.setNickname(nickname), [])
   const startGame = useCallback(() => sessionRef.current?.startGame(), [])
+  const sendCommand = useCallback((cmd: Command) => sessionRef.current?.sendCommand(cmd), [])
 
 
   /** 切换信令策略：房间内切换会离开并以新策略重新加入 */
@@ -171,8 +177,8 @@ export function useRoom(): UseRoomResult {
   )
 
   const actions = useMemo<RoomActions>(
-    () => ({ join, leave, setReady, setNickname, startGame, setStrategy }),
-    [join, leave, setReady, setNickname, startGame, setStrategy],
+    () => ({ join, leave, setReady, setNickname, startGame, setStrategy, sendCommand }),
+    [join, leave, setReady, setNickname, startGame, setStrategy, sendCommand],
   )
 
   return {

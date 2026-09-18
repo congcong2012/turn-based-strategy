@@ -59,9 +59,10 @@ test.describe('大厅（本地传输）', () => {
     ).toHaveAttribute('data-ready', 'true')
     await expect(alice.getByTestId('start-button')).toBeEnabled()
 
+    // M2：开始游戏后双方进入对局界面（部署阶段）
     await alice.getByTestId('start-button').click()
-    await expect(alice.getByTestId('notice')).toContainText('M2')
-    await expect(bob.getByTestId('notice')).toContainText('M2')
+    await expect(alice.getByTestId('phase-label')).toHaveText('部署')
+    await expect(bob.getByTestId('phase-label')).toHaveText('部署')
   })
 
   test('刷新页面后自动重新加入，且不产生重复玩家', async ({ context }) => {

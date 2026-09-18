@@ -94,8 +94,10 @@ describe('房间会话（双端内存传输）', () => {
 
     alice.session.startGame()
     await vi.advanceTimersByTimeAsync(50)
-    expect(alice.view.notice).toContain('M2')
-    expect(bob.view.notice).toContain('M2')
+    // M2：开始游戏后进入部署阶段，并生成权威对局状态
+    expect(alice.view.notice).toContain('部署阶段')
+    expect(alice.view.game?.phase).toBe('DEPLOY')
+    expect(bob.view.game?.phase).toBe('DEPLOY')
   })
 
   it('竞态：双方同时自任房主 → 收敛到同一房主', async () => {

@@ -112,6 +112,24 @@ Trystero 的 `selfId` 是**每次加载新生成**的（`genId(20)`），不能�
 Pixi 只负责棋盘渲染；Phaser 的场景/物理/输入/资源加载体系对本项目是冗余负载，
 且会把状态与渲染耦合起来。M1 未安装任何渲染库（大厅不需要画布），M2 接入 PixiJS。
 
+### ADR-9：游戏内核是纯函数，渲染与 React 都不碰规则
+
+`src/game/**` 只做"状态 → 新状态 + 事件"的纯计算，不依赖 React / Pixi / 网络：
+
+```
+applyCommand(state, playerId, cmd, data) → { ok: true, state, events } | { ok: false, code }
+```
+
+- 房主本地执行；客户端把同一条指令发给房主执行；**两端跑的是同一份代码**，但只有房主的结果是权威的；
+- 数值全部来自 `src/data/*.json`（兵种/地形/据点/克制矩阵/规则/地图），改平衡不用改代码；
+- 因此 70+ 条规则可以用纯单测覆盖（移动范围、伤害、反击、占领、经济、回合、胜负），不需要浏览器。
+
+### ADR-10：渲染层只负责"画"和"点"
+
+`src/render/boardApp.ts`（PixiJS 8）把权威状态画成棋盘，并把鼠标位置换算成格子坐标；
+它不判断任何合法性——点哪里都交给 `applyCommand` 拒绝。这样渲染层可以随时替换/优化。
+DEV 下会暴露 `window.__atBoard.project(x,y)`（格子→屏幕坐标），让 E2E 能用**真实鼠标点击**驱动 canvas。
+
 ## 2. 模块分层
 
 ```
@@ -119,6 +137,17 @@ src/
 ├─ main.tsx / App.tsx            入口与外壳
 ├─ ui/                           Lobby / PlayerList / ManualSdpPanel（纯展示 + 事件回调）
 ├─ hooks/useRoom.ts              React 绑定：身份解析、会话创建、生命周期串行化
+├─ game/                         纯规则内核（无 React / 无渲染 / 可纯单测）
+│  ├─ types.ts                   GameState / Unit / Command / ErrorCode / GameEvent
+│  ├─ data.ts                    加载并索引 src/data/*.json
+│  ├─ board.ts                   棋盘查询（单位、据点、部署区、深拷贝）
+│  ├─ movement.ts                Dijkstra 可达范围 / 路径 / 射程
+│  ├─ combat.ts                  确定性伤害公式与反击判定
+│  ├─ state.ts                   回合状态机（START/RESOLVE/HANDOVER）、经济、胜负、计分
+│  └─ commands.ts                指令校验与执行（房主权威的唯一入口）
+├─ render/
+│  └─ boardApp.ts                PixiJS 棋盘渲染 + 相机 + 点击换算
+├─ data/                         数据驱动：units/terrain/buildings/matchup/rules/maps/*.json
 ├─ net/
 │  ├─ types.ts                   Wire 协议、LobbySnapshot、Transport 接口
 │  ├─ createTransport.ts         传输工厂（trystero | local）
@@ -158,6 +187,14 @@ const session = createRoomSession({ ... })
 
 **教训**：第三方库的"静默失败"最贵。定位手段是**分层判别实验**：
 先确认网络（裸 WS+MQTT 握手）→ 再确认信令流量（报文计数）→ 再确认库状态（room.getPeers()）→ 最后读库源码。
+
+### 踩坑 2：PixiJS 在 React StrictMode 下把整棵组件树带崩
+
+**现象**：进入对局后界面全白，控制台报 `this._cancelResize is not a function`。
+**根因**：StrictMode 会"挂载 → 卸载 → 再挂载"，`Application.init()` 还没完成时 `destroy()` 就被调用，
+Pixi 内部在未初始化的 Application 上调私有方法直接抛错，React 渲染树随之卸载。
+**修复**：`BoardApp` 记录 `initialized/destroyed`，`init()` 完成后若已 destroyed 就直接收尾；
+`destroy()` 在未初始化时不碰 `Application.destroy()`。
 
 ## 4. 已知限制（M1）
 

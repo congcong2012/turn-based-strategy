@@ -22,6 +22,26 @@
 | `roomFull` | 房主 → 单播 | `from` | 房间已满，被拒玩家自动退回加入界面 |
 | `startHint` | 房主 → 全体 | `from` | 开始游戏提示（M1 只提示，M2 起改为进入 DEPLOY） |
 | `bye` | 双向 | `from` | 显式离开 |
+| `game` | 房主 → 全体/单播 | `from, state: GameState` | **M2 权威对局状态**：每次指令通过后广播；新玩家加入/重连时单播补发 |
+| `cmd` | 客户端 → 房主 | `from, cmd: Command` | 指令意图（房主校验后才会生效） |
+| `cmdRejected` | 房主 → 单播 | `from, code: ErrorCode` | 指令被拒绝，状态不变 |
+
+### 对局指令（Command，M2 子集）
+
+| 指令 | 阶段 | 说明 |
+| --- | --- | --- |
+| `deploy{unitType,x,y}` | DEPLOY | 在己方部署区放置单位（预算 3000 / 最多 4 个） |
+| `deployDone` | DEPLOY | 确认部署；双方都确认后进入 PLAYING |
+| `move{unitId,x,y}` | PLAYING | 移动（每单位每回合 1 次；路径由房主 Dijkstra 重算校验） |
+| `attack{unitId,targetId}` | PLAYING | 攻击（射程/间接单位"移动后不可攻击"校验，含反击结算） |
+| `capture{unitId}` | PLAYING | 占领（仅可占领兵种；进度 +floor(HP/10)，易主在回合结算生效） |
+| `produce{buildingId,unitType}` | PLAYING | 兵营生产（立即扣费，下一回合 START 出场） |
+| `wait{unitId}` | PLAYING | 待机（结束该单位本回合行动） |
+| `endTurn` | PLAYING | 结束回合（RESOLVE → HANDOVER → 下一玩家 START） |
+| `resign` | 任意 | 投降（不受回合归属限制） |
+
+> **M2 用完整状态广播**（`game`），而不是增量补丁：24×24 地图 + 数十单位的完整状态只有几 KB，
+> 2 人好友局下带宽与序列化成本可忽略，换来的是"不可能出现增量同步 bug"。等状态规模变大再改增量。
 
 ### LobbySnapshot
 
