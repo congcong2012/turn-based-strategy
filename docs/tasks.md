@@ -71,3 +71,19 @@ pnpm e2e              # 全部 E2E（含生产构建验收）
 
 > 首次运行 E2E 需要 `pnpm exec playwright install chromium`（约 170MB）。
 > CI 只跑单元测试 + 构建；E2E 作为本地质量门（真实 P2P 依赖公共信令，不适合放进部署流水线）。
+
+## GitHub Pages 部署清单
+
+1. **仓库 Settings → Pages → Build and deployment → Source 必须选 `GitHub Actions`**
+   （若选的是「Deploy from a branch」，Pages 会把仓库根目录当站点，直接返回源码版 index.html → 白屏）；
+2. 推送到 `main` 或 `master` 会自动触发 `.github/workflows/deploy.yml`（也可手动 Run workflow）；
+3. 工作流会跑单元测试 → `pnpm build` → 上传 `dist/` → 发布到 `https://<user>.github.io/<repo>/`；
+4. 本地可先自检子路径是否正常（复现线上环境）：
+
+   ```bash
+   pnpm build
+   node scripts/serve-subpath.mjs turn-based-strategy 4180   # 参数传仓库名，不要传 /repo/
+   # 浏览器打开 http://127.0.0.1:4180/turn-based-strategy/
+   ```
+
+   Windows/Git Bash 注意：命令行里形如 `/repo/` 的参数会被 MSYS 转换成 `C:/Program Files/Git/repo/`。

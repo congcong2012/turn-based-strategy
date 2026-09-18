@@ -84,9 +84,24 @@ Trystero 的 `selfId` 是**每次加载新生成**的（`genId(20)`），不能�
 
 ### ADR-7：GitHub Pages 子路径与路由
 
-- `vite.config.ts` 的 `base` 默认 `'./'`（相对路径，任意仓库名直接可用），CI 注入 `VITE_BASE=/<repo>/`；
+- `vite.config.ts` 的 `base` **固定用相对路径 `'./'`**：产物写成 `./assets/xxx.js`，
+  挂在 `https://<user>.github.io/<repo>/` 下自然解析到 `/<repo>/assets/...`，换仓库名无需改任何配置。
+  可选 `VITE_BASE=/<repo>/` 覆盖，但会做格式校验（见下）；
 - 路由**只用 query 参数** `?room=ABC123`，因此在 Pages 上**不需要 404.html 兜底**；
-- 开发服务器固定绑定 `127.0.0.1`（Windows 上 localhost 会解析到 ::1，导致探活失败）。
+- 开发服务器固定绑定 `127.0.0.1`（Windows 上 localhost 会解析到 ::1，导致 Playwright 探活失败）；
+- `public/.nojekyll` 随构建产出，防止将来改用分支部署时被 Jekyll 处理。
+
+> **踩坑（线上白屏真实案例）**：第一次部署后 `https://<user>.github.io/<repo>/` 白屏。
+> 现场取证：返回的 HTML 里是 `<script type="module" src="/src/main.tsx">`
+> ——**这是源码版 index.html**，说明 Pages 当时用的是「分支部署：master / (root)」，
+> 浏览器拿到的 TSX 无法执行，于是白屏；同时 `assets/` 返回 404。
+> 另外还发现两个坑：
+> 1. **工作流没触发**：仓库默认分支是 `master`，而工作流只监听 `main` → 改为 `[main, master]`；
+> 2. **Git Bash(MSYS) 会篡改绝对路径**：`VITE_BASE=/turn-based-strategy/` 被转换成
+>    `C:/Program Files/Git/turn-based-strategy/`，构建产物直接写坏。
+>    命令行参数同理（`node scripts/serve-subpath.mjs /repo/` 也会被转换）。
+>    因此：CI 不再注入 `VITE_BASE`，改回相对路径；`vite.config.ts` 对非法值做校验并回退；
+>    `scripts/serve-subpath.mjs` 只接收**仓库名**（内部自行拼 `/repo/`）。
 
 ### ADR-8：PixiJS vs Phaser（M2 前给出结论）
 

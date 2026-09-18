@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -35,10 +35,15 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
-      - name: Build (GitHub Pages 子路径)
+      # 产物使用相对 base('./')：挂在任意 GitHub Pages 子路径下都能加载，
+      # 因此不再注入 VITE_BASE（也避免 Windows/Git Bash 把 "/repo/" 转成 C:/Program Files/... 造成白屏）
+      - name: Build (GitHub Pages)
         run: pnpm build
-        env:
-          VITE_BASE: /${{ github.event.repository.name }}/
+
+      - name: Show build output
+        run: |
+          echo "repository: ${{ github.repository }}"
+          head -20 dist/index.html
 
       - uses: actions/configure-pages@v5
 
