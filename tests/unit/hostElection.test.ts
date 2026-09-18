@@ -80,6 +80,37 @@ describe('房主选举', () => {
     expect(types(bView.effects)).toEqual(['steppedDown'])
   })
 
+  it('竞态按"先到者优先"裁决：joinedAt 更早者保住房主（即使 playerId 更大）', () => {
+    // 甲(p9) 先加入 joinedAt=100，乙(p1) 后加入 joinedAt=200
+    let early = createElection('p9', '甲', 100)
+    early = seen(early, rec('p1', 200)).state
+    early = { ...early, hostId: 'p9', selfDeclared: true }
+
+    const keep = hostHello(early, 'p1')
+    expect(keep.state.hostId).toBe('p9')
+    expect(types(keep.effects)).toEqual(['broadcastHostHello'])
+
+    // 反向：后加入者(p1) 收到更早加入者(p9) 的声明 → 降级
+    let late = createElection('p1', '乙', 200)
+    late = seen(late, rec('p9', 100)).state
+    late = { ...late, hostId: 'p1', selfDeclared: true }
+
+    const stepDown = hostHello(late, 'p9')
+    expect(stepDown.state.hostId).toBe('p9')
+    expect(stepDown.state.selfDeclared).toBe(false)
+    expect(types(stepDown.effects)).toEqual(['steppedDown'])
+  })
+
+  it('joinedAt 相同 → 退回 playerId 字典序', () => {
+    let a = createElection('p2', '乙', 100)
+    a = seen(a, rec('p1', 100)).state
+    a = { ...a, hostId: 'p2', selfDeclared: true }
+
+    const result = hostHello(a, 'p1')
+    expect(result.state.hostId).toBe('p1')
+    expect(types(result.effects)).toEqual(['steppedDown'])
+  })
+
   it('房主掉线超宽限期 → 剩余最早加入者接管（仅 LOBBY）', () => {
     const p2 = gone(clientView('p2', 100, 'p1', [['p3', 200]]), 'p1').state
     const p3 = gone(clientView('p3', 200, 'p1', [['p2', 100]]), 'p1').state
