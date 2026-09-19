@@ -184,24 +184,30 @@ describe('房间会话（双端内存传输）', () => {
     expect(bobAgain.view.hostNickname).toBe('甲')
   })
 
-  it('房间满员：第三名玩家被拒绝，名单不变', async () => {
+  it('房间容量 4：第 3/4 人可加入，第 5 人被拒绝', async () => {
     const alice = makePeer(hub, 'alice', '甲')
     await alice.session.join(ROOM)
     await vi.advanceTimersByTimeAsync(3200)
     const bob = makePeer(hub, 'bob', '乙')
     await bob.session.join(ROOM)
     await vi.advanceTimersByTimeAsync(200)
-
     const carol = makePeer(hub, 'carol', '丙')
     await carol.session.join(ROOM)
-    await vi.advanceTimersByTimeAsync(300)
+    await vi.advanceTimersByTimeAsync(200)
+    const dave = makePeer(hub, 'dave', '丁')
+    await dave.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(200)
 
-    expect(alice.view.players).toHaveLength(2)
-    // 被拒绝的玩家：退回加入界面并给出提示
-    expect(carol.view.players).toHaveLength(0)
-    expect(carol.view.roomCode).toBeNull()
-    expect(carol.view.notice).toContain('房间已满')
-    expect(alice.view.players.map((p) => p.playerId)).toEqual(['alice', 'bob'])
+    expect(alice.view.players.map((p) => p.playerId)).toEqual(['alice', 'bob', 'carol', 'dave'])
+    expect(carol.view.players).toHaveLength(4)
+
+    const eve = makePeer(hub, 'eve', '戊')
+    await eve.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(eve.view.players).toHaveLength(0)
+    expect(eve.view.roomCode).toBeNull()
+    expect(eve.view.notice).toContain('房间已满')
+    expect(alice.view.players).toHaveLength(4)
   })
 
   it('非法房间码被拒绝且不建立连接', async () => {

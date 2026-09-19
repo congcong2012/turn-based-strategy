@@ -148,6 +148,18 @@ DEV 下会暴露 `window.__atBoard.project(x,y)`（格子→屏幕坐标），�
 
 选举阶段（`hostElection.phase`）随对局阶段切换成 DEPLOY/PLAYING，从而自动落实"LOBBY 之外不允许接管"。
 
+### ADR-15：多人（2–4 人）与淘汰制（M6）
+
+引擎从设计之初就是「玩家数组 + 回合索引」，因此扩到 4 人只需要：
+1. **地图注册表**：DATA.maps + MAP_LIST，地图自带 deployZones（数量 = 可容纳玩家数）；
+2. **淘汰制**取代「斩首即胜」：GameState.eliminated[]，王城易主或部队归零 → 淘汰该玩家
+   （部队撤离、据点归中立），只剩 1 人时结算；2 人局下与旧规则完全等价；
+3. **回合轮转跳过淘汰者**，并正确判断「是否绕回第一位玩家」来决定大回合 +1；
+4. 计分只统计幸存者（回合上限时）。
+
+沿用一条经验：**凡是引擎里用到 DATA 默认参数的地方，都要能被注入的 data 覆盖**——
+M2 的 applyWinCheck、M6 的 resign 都因为漏传 data 在自定义地图上崩过。
+
 ### ADR-14：渲染层的两个「静默杀手」（M5 实录）
 
 1. **PixiJS 默认优先 WebGPU**：在没有可用 GPU 的环境（Playwright 移动端模拟等）Application.init()

@@ -2,7 +2,7 @@
 
 import type { LobbyPlayer, LobbySnapshot, Phase } from '../net/types'
 
-export const MAX_PLAYERS = 2
+export const MAX_PLAYERS = 4
 
 export function createLobby(roomCode: string, hostId: string, phase: Phase = 'LOBBY'): LobbySnapshot {
   return recompute({
@@ -12,8 +12,14 @@ export function createLobby(roomCode: string, hostId: string, phase: Phase = 'LO
     players: [],
     maxPlayers: MAX_PLAYERS,
     canStart: false,
+    mapId: null,
     rev: 0,
   })
+}
+
+/** 房主选图（null = 自动） */
+export function setMapId(lobby: LobbySnapshot, mapId: string | null): LobbySnapshot {
+  return { ...lobby, mapId }
 }
 
 export function connectedCount(lobby: LobbySnapshot): number {
@@ -99,6 +105,6 @@ export function setPhase(lobby: LobbySnapshot, phase: Phase): LobbySnapshot {
 export function recompute(lobby: LobbySnapshot): LobbySnapshot {
   const players = lobby.players.map((p) => ({ ...p, isHost: p.playerId === lobby.hostId }))
   const online = players.filter((p) => p.connected)
-  const canStart = online.length >= 2 && online.every((p) => p.ready)
+  const canStart = online.length >= 2 && online.every((p) => p.ready) && online.length <= MAX_PLAYERS
   return { ...lobby, players, canStart }
 }

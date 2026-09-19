@@ -290,7 +290,15 @@ export function GameScreen({ view, actions }: GameScreenProps) {
                 <div className="score-rows">
                   {game.players.map((p) => (
                     <div key={p} className="score-row" data-testid={'score-' + p}>
-                      <span style={{ color: playerColor(game, p) }}>{nameOf(view, p)}</span>
+                      <span style={{ color: playerColor(game, p) }}>
+                        {nameOf(view, p)}
+                        {game.eliminated.includes(p) ? (
+                          <span className="tag tag-waiting" data-testid={'eliminated-' + p}>
+                            {' '}
+                            已淘汰
+                          </span>
+                        ) : null}
+                      </span>
                       <span className="muted small">
                         据点 {game.buildings.filter((b) => b.owner === p).length} · 单位{' '}
                         {game.units.filter((u) => u.owner === p).length} · 资金 {game.funds[p] ?? 0} · 分{' '}

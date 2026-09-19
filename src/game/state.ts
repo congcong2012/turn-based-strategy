@@ -33,6 +33,7 @@ export function createGame(mapId: string, players: PlayerId[], data: GameData = 
     phase: 'DEPLOY',
     turnPhase: 'ACTION',
     deploy,
+    eliminated: [],
     winner: null,
     winReason: null,
     nextSeq: 1,
@@ -149,32 +150,53 @@ export function scoreOf(state: GameState, playerId: PlayerId, data: GameData = D
   return total + Math.floor(unitCost / 1000) + Math.floor((state.funds[playerId] ?? 0) / 1000)
 }
 
-/** 胜负判定：斩首 → 歼灭 → （回合上限时另行计分） */
+export function survivors(state: GameState): PlayerId[] {
+  return state.players.filter((p) => !state.eliminated.includes(p))
+}
+
+/** 淘汰一名玩家：部队撤离、据点归中立（便于他人接管） */
+function eliminate(s: GameState, playerId: PlayerId, reason: 'hq_captured' | 'annihilation' | 'resign', events: GameEvent[]): void {
+  if (s.eliminated.includes(playerId)) return
+  s.eliminated = [...s.eliminated, playerId]
+  s.units = s.units.filter((u) => u.owner !== playerId)
+  s.buildings = s.buildings.map((b) => (b.owner === playerId ? { ...b, owner: null, capture: null } : b))
+  s.pending = s.pending.filter((p) => p.owner !== playerId)
+  events.push({ type: 'eliminated', playerId, reason })
+  s.lastElimination = reason
+}
+
+function finishGame(s: GameState, events: GameEvent[]): void {
+  const alive = survivors(s)
+  const reason = (s.lastElimination ?? 'annihilation') as 'hq_captured' | 'annihilation' | 'resign'
+  s.phase = 'GAME_OVER'
+  s.winner = alive.length === 1 ? alive[0] : null
+  s.winReason = alive.length === 1 ? reason : 'score'
+  events.push({ type: 'gameOver', winner: s.winner, reason: s.winReason })
+}
+
+/**
+ * 胜负判定（支持 2–4 人）：
+ *  - 王城被敌方占领 → 原主被淘汰（其部队撤离、其余据点归中立）
+ *  - 场上无任何部队 → 该玩家被淘汰
+ *  - 只剩一名存活者 → 该玩家获胜；回合上限时按幸存者计分
+ */
 function applyWinCheck(s: GameState, events: GameEvent[], data: GameData = DATA): void {
   if (s.phase === 'GAME_OVER') return
+
+  const map = getMap(s.mapId, data)
   for (const b of s.buildings) {
-    if (b.type === 'hq' && b.owner !== null && s.players.length > 1) {
-      const original = getMap(s.mapId, data).buildings.find((x) => x.id === b.id)?.owner
-      const originalPlayer = original === null || original === undefined ? null : s.players[original]
-      if (originalPlayer && originalPlayer !== b.owner) {
-        s.phase = 'GAME_OVER'
-        s.winner = b.owner
-        s.winReason = 'hq_captured'
-        events.push({ type: 'gameOver', winner: b.owner, reason: 'hq_captured' })
-        return
-      }
-    }
+    if (b.type !== 'hq' || b.owner === null) continue
+    const originalIndex = map.buildings.find((x) => x.id === b.id)?.owner
+    const originalPlayer = originalIndex === null || originalIndex === undefined ? null : s.players[originalIndex]
+    if (originalPlayer && originalPlayer !== b.owner) eliminate(s, originalPlayer, 'hq_captured', events)
   }
+
   for (const p of s.players) {
-    if (s.units.every((u) => u.owner !== p)) {
-      const winner = s.players.find((x) => x !== p) ?? null
-      s.phase = 'GAME_OVER'
-      s.winner = winner
-      s.winReason = 'annihilation'
-      events.push({ type: 'gameOver', winner, reason: 'annihilation' })
-      return
-    }
+    if (s.eliminated.includes(p)) continue
+    if (s.units.every((u) => u.owner !== p)) eliminate(s, p, 'annihilation', events)
   }
+
+  if (survivors(s).length <= 1) finishGame(s, events)
 }
 
 /** RESOLVE 阶段：清理阵亡 → 占领易主 → 胜负判定 */
@@ -215,16 +237,26 @@ export function endTurn(state: GameState, data: GameData = DATA): { state: GameS
   s.turnPhase = 'HANDOVER'
   events.push({ type: 'turnEnd', playerId: s.players[s.turnIndex] })
 
-  const nextIndex = (s.turnIndex + 1) % s.players.length
-  if (nextIndex === 0) {
+  // 找下一个存活玩家（跳过已淘汰者），并判断是否绕回第一个玩家
+  let nextIndex = s.turnIndex
+  let wrapped = false
+  for (let step = 1; step <= s.players.length; step += 1) {
+    const candidate = (s.turnIndex + step) % s.players.length
+    if (candidate <= s.turnIndex) wrapped = true
+    if (!s.eliminated.includes(s.players[candidate])) {
+      nextIndex = candidate
+      break
+    }
+  }
+  if (wrapped) {
     s.round += 1
     if (s.round > data.rules.roundLimit) {
-      const scored = s.players.map((p) => ({ p, score: scoreOf(s, p, data) }))
+      const scored = survivors(s).map((p) => ({ p, score: scoreOf(s, p, data) }))
       scored.sort((a, b) => b.score - a.score)
       const top = scored[0]
       const tied = scored.filter((x) => x.score === top.score).length > 1
       s.phase = 'GAME_OVER'
-      s.winner = tied ? null : top.p
+      s.winner = tied || !top ? null : top.p
       s.winReason = 'score'
       events.push({ type: 'gameOver', winner: s.winner, reason: 'score' })
       return { state: s, events }
@@ -235,13 +267,30 @@ export function endTurn(state: GameState, data: GameData = DATA): { state: GameS
   return { state: started.state, events: [...events, ...started.events] }
 }
 
-export function resign(state: GameState, playerId: PlayerId): { state: GameState; events: GameEvent[] } {
+/** 投降：该玩家被淘汰；若只剩一名存活者则其获胜，否则对局继续 */
+export function resign(state: GameState, playerId: PlayerId, data: GameData = DATA): { state: GameState; events: GameEvent[] } {
   const s = clone(state)
-  const winner = s.players.find((p) => p !== playerId) ?? null
-  s.phase = 'GAME_OVER'
-  s.winner = winner
-  s.winReason = 'resign'
-  return { state: s, events: [{ type: 'gameOver', winner, reason: 'resign' }] }
+  const events: GameEvent[] = []
+  if (!s.eliminated.includes(playerId)) {
+    s.eliminated = [...s.eliminated, playerId]
+    s.units = s.units.filter((u) => u.owner !== playerId)
+    s.buildings = s.buildings.map((b) => (b.owner === playerId ? { ...b, owner: null, capture: null } : b))
+    s.pending = s.pending.filter((p) => p.owner !== playerId)
+    events.push({ type: 'eliminated', playerId, reason: 'resign' })
+  }
+  const alive = survivors(s)
+  if (alive.length <= 1) {
+    s.phase = 'GAME_OVER'
+    s.winner = alive[0] ?? null
+    s.winReason = 'resign'
+    events.push({ type: 'gameOver', winner: s.winner, reason: 'resign' })
+    return { state: s, events }
+  }
+  // 还有多人存活：如果轮到的正是投降者，把回合交给下一位
+  if (s.players[s.turnIndex] === playerId) {
+    return endTurn(s, data)
+  }
+  return { state: s, events }
 }
 
 export function makeUnit(state: GameState, typeId: string, owner: PlayerId, x: number, y: number, data: GameData = DATA): Unit {

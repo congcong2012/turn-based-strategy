@@ -30,6 +30,8 @@ export type LobbySnapshot = {
   players: LobbyPlayer[]
   maxPlayers: number
   canStart: boolean
+  /** 房主选择的地图（null = 开局时按人数自动挑） */
+  mapId: string | null
   /** 房主侧单调递增版本号：客户端据此丢弃过期的重排快照 */
   rev: number
 }

@@ -22,7 +22,7 @@ export function applyCommand(state: GameState, playerId: PlayerId, cmd: Command,
   // 部署阶段的指令
   if (state.phase === 'DEPLOY') {
     if (cmd.type === 'resign') {
-      const r = resign(state, playerId)
+      const r = resign(state, playerId, data)
       return ok(r.state, r.events)
     }
     if (cmd.type === 'deploy') return deploy(state, playerId, cmd.unitType, cmd.x, cmd.y, data)
@@ -32,7 +32,7 @@ export function applyCommand(state: GameState, playerId: PlayerId, cmd: Command,
 
   // 投降不受回合归属限制
   if (cmd.type === 'resign') {
-    const r = resign(state, playerId)
+    const r = resign(state, playerId, data)
     return ok(r.state, r.events)
   }
 

@@ -27,7 +27,7 @@ export default defineConfig({
   projects: [
     {
       name: 'local',
-      testMatch: /(local|game|reconnect)\.spec\.ts/,
+      testMatch: /(local|game|reconnect|multiplayer)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], baseURL: DEV_URL },
     },
     {

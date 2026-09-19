@@ -34,12 +34,18 @@ describe('房主端大厅名单', () => {
     expect(lobby.players[1].isHost).toBe(false)
   })
 
-  it('满员判定按在线人数', () => {
+  it('满员判定按在线人数（2–4 人）', () => {
+    const p3 = { playerId: 'carol', nickname: '丙' }
+    const p4 = { playerId: 'dave', nickname: '丁' }
     let lobby = upsertPlayer(createLobby('ABC23D', 'alice'), alice)
     expect(isFull(lobby)).toBe(false)
     lobby = upsertPlayer(lobby, bob)
-    expect(isFull(lobby)).toBe(true)
-    expect(connectedCount(lobby)).toBe(2)
+    expect(isFull(lobby)).toBe(false) // 2 人还能再来
+    lobby = upsertPlayer(lobby, p3)
+    expect(isFull(lobby)).toBe(false)
+    lobby = upsertPlayer(lobby, p4)
+    expect(isFull(lobby)).toBe(true) // 4 人满
+    expect(connectedCount(lobby)).toBe(4)
     expect(hasPlayer(lobby, 'bob')).toBe(true)
   })
 

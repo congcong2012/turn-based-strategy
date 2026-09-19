@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ROOM_CODE_LENGTH, normalizeRoomCode, randomRoomCode, isValidRoomCode } from '../app/roomCode'
+import { MAP_LIST, defaultMapFor } from '../game/data'
 import type { Identity } from '../app/identity'
 import type { RoomView } from '../net/roomSession'
 import type { SignalStrategy, TransportKind } from '../net/types'
@@ -127,7 +128,7 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
               加入房间
             </button>
             <span className="muted small">
-              同一个房间码 = 同一个房间；第一个进入的人自动成为房主。
+              同一个房间码 = 同一个房间；第一个进入的人自动成为房主，2–4 人均可开局。
             </span>
           </div>
         </section>
@@ -175,7 +176,9 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
                   开始游戏
                 </button>
                 <span className="muted small" data-testid="start-hint">
-                  {view.canStart ? '全员已准备，可以开始' : '等待所有玩家准备'}
+                  {view.canStart
+                    ? '全员已准备，可以开始（' + MAP_LIST.find((m) => m.id === (view.mapId ?? defaultMapFor(view.players.length)))?.name + '）'
+                    : '等待所有玩家准备（2–4 人）'}
                 </span>
               </>
             ) : (
@@ -210,6 +213,30 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
                 <option value="mqtt">MQTT（默认）</option>
                 <option value="torrent">Torrent（备用）</option>
               </select>
+            </label>
+
+            <label className="field inline">
+              <span>地图</span>
+              {view.isHost ? (
+                <select
+                  data-testid="map-select"
+                  value={view.mapId ?? ''}
+                  onChange={(event) => actions.setMap(event.target.value === '' ? null : event.target.value)}
+                >
+                  <option value="">
+                    自动（按人数：{view.players.filter((p) => p.connected).length <= 2 ? '古道渡口 2 人' : '四战之地 4 人'}）
+                  </option>
+                  {MAP_LIST.map((map) => (
+                    <option key={map.id} value={map.id}>
+                      {map.name}（{map.width}×{map.height} · {map.players} 人）
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="muted small" data-testid="map-label">
+                  {view.mapId ? (MAP_LIST.find((m) => m.id === view.mapId)?.name ?? view.mapId) : '由房主决定'}
+                </span>
+              )}
             </label>
 
             {debug.canUseLocal ? (

@@ -29,6 +29,8 @@ export interface RoomActions {
   sendCommand: (cmd: Command) => void
   /** 房主：跳过掉线玩家的回合 */
   skipDisconnectedTurn: () => void
+  /** 房主：选择地图（null = 按人数自动） */
+  setMap: (mapId: string | null) => void
 }
 
 export interface UseRoomResult {
@@ -58,6 +60,7 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     error: null,
     peerCount: 0,
     game: null,
+    mapId: null,
     myTurn: false,
     paused: false,
     pausedReason: 'none',
@@ -170,6 +173,7 @@ export function useRoom(): UseRoomResult {
   const startGame = useCallback(() => sessionRef.current?.startGame(), [])
   const sendCommand = useCallback((cmd: Command) => sessionRef.current?.sendCommand(cmd), [])
   const skipDisconnectedTurn = useCallback(() => sessionRef.current?.skipDisconnectedTurn(), [])
+  const setMap = useCallback((mapId: string | null) => sessionRef.current?.setMap(mapId), [])
 
 
   /** 切换信令策略：房间内切换会离开并以新策略重新加入 */
@@ -190,8 +194,8 @@ export function useRoom(): UseRoomResult {
   )
 
   const actions = useMemo<RoomActions>(
-    () => ({ join, leave, setReady, setNickname, startGame, setStrategy, sendCommand, skipDisconnectedTurn }),
-    [join, leave, setReady, setNickname, startGame, setStrategy, sendCommand, skipDisconnectedTurn],
+    () => ({ join, leave, setReady, setNickname, startGame, setStrategy, sendCommand, skipDisconnectedTurn, setMap }),
+    [join, leave, setReady, setNickname, startGame, setStrategy, sendCommand, skipDisconnectedTurn, setMap],
   )
 
   return {

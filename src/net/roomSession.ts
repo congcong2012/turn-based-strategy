@@ -22,6 +22,7 @@ import {
   markConnected,
   markDisconnected,
   removePlayer,
+  setMapId as lobbySetMapId,
   setNickname as lobbySetNickname,
   setReady as lobbySetReady,
   upsertPlayer,
@@ -32,6 +33,7 @@ import type { GameStorage } from './gameStore'
 import { applyCommand } from '../game/commands'
 import { describeEvents } from '../game/logText'
 import type { LogContext } from '../game/logText'
+import { defaultMapFor } from '../game/data'
 import { createGame } from '../game/state'
 import { buildingType, unitType } from '../game/data'
 import type { Command, GameEvent, GameState } from '../game/types'
@@ -73,6 +75,8 @@ export interface RoomView {
   peerCount: number
   /** M2：房主创建对局后，客户端会持续收到权威状态 */
   game: GameState | null
+  /** 房主选择的地图（null = 自动） */
+  mapId: string | null
   /** 当前是否轮到我行动 */
   myTurn: boolean
   /** M3：对局是否被暂停（房主掉线，或轮到掉线玩家） */
@@ -110,6 +114,8 @@ export interface RoomSession {
   leave: () => Promise<void>
   setReady: (ready: boolean) => void
   setNickname: (nickname: string) => void
+  /** 房主：选择地图（null = 按人数自动） */
+  setMap: (mapId: string | null) => void
   /** 房主：LOBBY → DEPLOY，创建权威对局状态 */
   startGame: () => void
   /** 任何玩家：发出对局指令（房主本地校验，客户端发给房主校验） */
@@ -235,6 +241,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       error,
       peerCount: transport ? transport.getPeers().length : 0,
       game,
+      mapId: lobby?.mapId ?? null,
       myTurn: game !== null && game.phase === 'PLAYING' && game.players[game.turnIndex] === selfId,
       paused: pausedReason !== 'none',
       pausedReason,
@@ -663,7 +670,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         emit()
         return
       }
-      game = createGame('ancient_01', order)
+      const mapId = lobby?.mapId ?? defaultMapFor(order.length)
+      game = createGame(mapId, order)
       if (election) election = electionSetPhase(election, 'DEPLOY')
       if (lobby) lobby = { ...lobby, phase: 'DEPLOY' }
       notice = '进入部署阶段：在己方部署区放置初始部队'
@@ -678,6 +686,13 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       if (isPlayerConnected(current)) return
       notice = '已跳过掉线玩家的回合'
       runCommand(current, { type: 'endTurn' })
+    },
+
+    setMap(mapId: string | null): void {
+      if (!isHost() || !lobby) return
+      lobby = lobbySetMapId(lobby, mapId)
+      broadcastLobby()
+      emit()
     },
 
     sendCommand(cmd: Command): void {

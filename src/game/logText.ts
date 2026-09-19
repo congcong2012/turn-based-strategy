@@ -49,6 +49,13 @@ export function describeEvent(event: GameEvent, ctx: LogContext): string {
       return '第 ' + event.round + ' 回合 · 轮到 ' + ctx.playerName(event.playerId)
     case 'turnEnd':
       return ctx.playerName(event.playerId) + ' 结束回合'
+    case 'eliminated':
+      return (
+        ctx.playerName(event.playerId) +
+        ' 被淘汰（' +
+        (event.reason === 'hq_captured' ? '王城失守' : event.reason === 'annihilation' ? '全军覆没' : '投降') +
+        '）'
+      )
     case 'gameOver':
       return '对局结束：' + (event.winner ? ctx.playerName(event.winner) + ' 获胜' : '和局') + '（' + (WIN_REASON[event.reason] ?? event.reason) + '）'
     default:

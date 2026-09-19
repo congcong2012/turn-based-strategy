@@ -6,6 +6,7 @@ import buildingsJson from '../data/buildings.json'
 import matchupJson from '../data/matchup.json'
 import rulesJson from '../data/rules.json'
 import ancient01 from '../data/maps/ancient_01.json'
+import ancient04 from '../data/maps/ancient_04.json'
 import type { BuildingState, BuildingType, MoveType, TerrainType, UnitType } from './types'
 
 export type MapDef = {
@@ -71,7 +72,33 @@ export const DATA: GameData = {
   matchup: buildMatchup(),
   capturePoints: buildingsJson.capturePoints,
   rules: rulesJson as Rules,
-  maps: { ancient_01: ancient01 as MapDef },
+  maps: { ancient_01: ancient01 as MapDef, ancient_04: ancient04 as MapDef },
+}
+
+export type MapInfo = {
+  id: string
+  name: string
+  width: number
+  height: number
+  /** 部署区数量 = 可容纳的玩家数 */
+  players: number
+}
+
+/** 地图清单（房主在大厅里选；未选时按人数自动挑） */
+export const MAP_LIST: MapInfo[] = Object.values(DATA.maps).map((map) => ({
+  id: map.id,
+  name: map.name,
+  width: map.width,
+  height: map.height,
+  players: map.deployZones.length,
+}))
+
+/** 按人数自动推荐地图 */
+export function defaultMapFor(playerCount: number): string {
+  const exact = MAP_LIST.find((m) => m.players === playerCount)
+  if (exact) return exact.id
+  const enough = MAP_LIST.filter((m) => m.players >= playerCount).sort((a, b) => a.players - b.players)[0]
+  return enough?.id ?? MAP_LIST[0].id
 }
 
 export function unitType(id: string, data: GameData = DATA): UnitType {

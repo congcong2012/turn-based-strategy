@@ -90,6 +90,10 @@ export type GameState = {
   phase: GamePhase
   turnPhase: TurnPhase
   deploy: Record<PlayerId, { budget: number; placed: number; done: boolean }>
+  /** 已被淘汰的玩家（王城被占 / 全歼 / 投降） */
+  eliminated: PlayerId[]
+  /** 最近一次淘汰原因（用于结算文案） */
+  lastElimination?: 'hq_captured' | 'annihilation' | 'resign'
   winner: PlayerId | null
   winReason: 'hq_captured' | 'annihilation' | 'score' | 'resign' | null
   nextSeq: number
@@ -115,6 +119,7 @@ export type GameEvent =
   | { type: 'income'; playerId: PlayerId; amount: number }
   | { type: 'turnStart'; playerId: PlayerId; round: number }
   | { type: 'turnEnd'; playerId: PlayerId }
+  | { type: 'eliminated'; playerId: PlayerId; reason: 'hq_captured' | 'annihilation' | 'resign' }
   | { type: 'gameOver'; winner: PlayerId | null; reason: 'hq_captured' | 'annihilation' | 'score' | 'resign' }
 
 export type Command =
