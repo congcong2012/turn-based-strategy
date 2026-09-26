@@ -200,6 +200,41 @@ test.describe('对局（本地传输）', () => {
     await expect(alice.getByTestId('join-panel')).toBeVisible()
   })
 
+  test('地图可拖动、可滚轮缩放（画面必须真的刷新）', async ({ context }) => {
+    const { alice } = await setupTwoPlayers(context)
+    const canvas = alice.locator('.board-host canvas')
+    await expect(canvas).toBeVisible()
+    await expect
+      .poll(() => alice.evaluate(() => typeof (globalThis as unknown as { __atBoard?: unknown }).__atBoard !== 'undefined'), { timeout: 20_000 })
+      .toBe(true)
+
+    const camera = () =>
+      alice.evaluate(() => (globalThis as unknown as { __atBoard: { camera: () => { scale: number; offsetX: number; offsetY: number } } }).__atBoard.camera())
+    const shot = async () => (await alice.locator('.board-host').screenshot()).toString('base64')
+
+    const before = await camera()
+    const beforeShot = await shot()
+    const box = (await canvas.boundingBox())!
+
+    // 拖动平移
+    await alice.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await alice.mouse.down()
+    for (let i = 1; i <= 6; i += 1) {
+      await alice.mouse.move(box.x + box.width / 2 - i * 20, box.y + box.height / 2 - i * 8)
+      await alice.waitForTimeout(16)
+    }
+    await alice.mouse.up()
+    await expect.poll(async () => Math.abs((await camera()).offsetX - before.offsetX), { timeout: 10_000 }).toBeGreaterThan(20)
+    const afterDrag = await shot()
+    expect(afterDrag).not.toBe(beforeShot) // 画面必须重绘，否则就是"拖不动"
+
+    // 滚轮缩放
+    await alice.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await alice.mouse.wheel(0, -400)
+    await expect.poll(async () => (await camera()).scale, { timeout: 10_000 }).toBeGreaterThan(before.scale)
+    expect(await shot()).not.toBe(afterDrag)
+  })
+
   test('部署区外点击会说明方位并可一键定位（避免"地图点了没反应"）', async ({ context }) => {
     const { alice } = await setupTwoPlayers(context)
     await alice.getByTestId('deploy-sword').click()

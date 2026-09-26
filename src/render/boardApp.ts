@@ -396,6 +396,20 @@ export class BoardApp {
     this.clampOffsets()
     this.world.scale.set(this.scale)
     this.world.position.set(this.offsetX, this.offsetY)
+    // 关键：autoStart:false 之后没有常驻 ticker，相机变化必须主动重绘，
+    // 否则拖动/滚轮/双指缩放只是改了矩阵，画面永远不刷新（表现为"地图拖不动、缩放没反应"）
+    this.scheduleRender()
+  }
+
+  /** 用 rAF 合并同一帧内的多次重绘请求（拖动时每次 pointermove 都会调） */
+  private scheduleRender(): void {
+    if (this.destroyed || !this.initialized) return
+    if (this.renderScheduled) return
+    this.renderScheduled = true
+    requestAnimationFrame(() => {
+      this.renderScheduled = false
+      this.render()
+    })
   }
 
   private attachPointerHandlers(): void {
@@ -494,6 +508,7 @@ export class BoardApp {
   >()
   private terrainKey = ''
   private renderErrorLogged = false
+  private renderScheduled = false
 
   /** 文本对象池：复用 Text，避免每次重绘都新建（Pixi 的 Text 会各自持有纹理） */
   private textAt(pool: 'capture' | 'floater', index: number, style: Record<string, unknown>): import('pixi.js').Text {
