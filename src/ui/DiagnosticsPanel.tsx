@@ -16,7 +16,8 @@ export function DiagnosticsPanel({ view }: DiagnosticsPanelProps) {
     '房间码: ' + (view.roomCode ?? '-'),
     '角色: ' + view.role + (view.isHost ? '（房主）' : ''),
     '连接状态: ' + connectionLabel(view.connection) + '（' + view.connection + '）',
-    '传输: ' + view.kind + ' / 信令: ' + view.strategy,
+    // manual 传输不经过任何公共信令，写清楚以免排查时误判
+    view.kind === 'manual' ? '传输: 手动直连（未使用公共信令）' : '传输: ' + view.kind + ' / 信令: ' + view.strategy,
     '传输状态: ' + view.transportStatus + (view.transportDetail ? '（' + view.transportDetail + '）' : ''),
     '连接数: ' + view.peerCount,
     '玩家: ' + view.players.map((p) => p.nickname + (p.connected ? '' : '(离线)')).join('、'),
