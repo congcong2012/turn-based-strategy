@@ -148,6 +148,18 @@ DEV 下会暴露 `window.__atBoard.project(x,y)`（格子→屏幕坐标），�
 
 选举阶段（`hostElection.phase`）随对局阶段切换成 DEPLOY/PLAYING，从而自动落实"LOBBY 之外不允许接管"。
 
+### ADR-16：手动直连（SDP 交换）与连接状态机（M7）
+
+**手动直连**：AGENTS.md 要求「公共信令不稳定时提供手动交换 SDP 的降级方案」。
+实现要点是**复用同一个 Transport 接口**：`manualTransport.ts` 用裸 `RTCPeerConnection` + 一条 DataChannel，
+把 SDP 打包成 `AT1:<base64>` 连接码（房主出 offer，好友回 answer），其余（hello/hostHello/lobby/game/cmd）
+与 Trystero 路径完全一致。因此限流、重连、房主权威、指令校验全都不用改。
+代价与限制（UI 与文档都写明）：仅 2 人、需要带外渠道、无 TURN 时对称 NAT 后可能连不上。
+
+**连接状态机**：`deriveConnectionState()` 是纯函数，输入「角色 / 传输状态 / peer 数 / 名单人数 / 是否对局中」，
+输出 `idle|connecting|connected|waiting|reconnecting|failed`，UI 与诊断面板共用同一份文案表。
+把它抽成纯函数的好处是：5 种状态的组合可以在单测里全覆盖，不必靠慢速 E2E 去凑网络故障。
+
 ### ADR-15：多人（2–4 人）与淘汰制（M6）
 
 引擎从设计之初就是「玩家数组 + 回合索引」，因此扩到 4 人只需要：

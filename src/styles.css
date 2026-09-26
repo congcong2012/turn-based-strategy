@@ -195,3 +195,28 @@ button.block { width: 100%; margin-bottom: 8px; }
   border-left: 2px solid var(--line); padding-left: 8px;
 }
 .log-list li:first-child { color: var(--text); border-left-color: var(--gold); }
+.conn-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel-2);
+}
+.conn-badge .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.conn-badge button { padding: 2px 8px; font-size: 11px; }
+.conn-badge.st-connected { border-color: #3f7a5a; color: #a8e6bf; }
+.conn-badge.st-connected .conn-dot { background: #5fd08a; }
+.conn-badge.st-connecting .conn-dot { background: var(--gold); animation: connPulse 1s infinite; }
+.conn-badge.st-waiting .conn-dot { background: #6fa8d0; }
+.conn-badge.st-reconnecting { border-color: #7a5f2a; color: #f0d9a8; }
+.conn-badge.st-reconnecting .conn-dot { background: var(--gold); animation: connPulse 0.8s infinite; }
+.conn-badge.st-failed { border-color: #7a3a2a; color: #f0b6a8; }
+.conn-badge.st-failed .conn-dot { background: #d94f3d; }
+@keyframes connPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.mode-row button.picked { border-color: var(--gold); background: #33291a; }
+.diag-panel summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.diag-body {
+  font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 8px; margin: 8px 0; max-height: 220px; overflow: auto; color: var(--muted);
+}
+.diag-panel button { font-size: 12px; }
+.manual-panel textarea { font-family: monospace; font-size: 11px; }

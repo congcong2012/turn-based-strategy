@@ -11,7 +11,7 @@
  */
 
 import type { JoinRoomConfig, Room } from '@trystero-p2p/core'
-import type { SignalStrategy, Transport, TransportHandlers, TransportStatus, Wire } from './types'
+import type { SignalStrategy, Transport, TransportHandlers, Wire } from './types'
 
 export const APP_ID = 'ancient-tactics-mvp-v1'
 
@@ -61,7 +61,7 @@ export async function createTrysteroTransport(options: TrysteroTransportOptions)
   handlers.onStatus('connecting')
 
   const room = mod.joinRoom(config, APP_ID + '::' + roomCode, {
-    onJoinError: (err: { error: string }) => handlers.onStatus('error', err.error),
+    onJoinError: (err: { error: string }) => handlers.onStatus('failed', err.error),
   })
 
   const action = room.makeAction<Wire>('wire')
@@ -69,7 +69,32 @@ export async function createTrysteroTransport(options: TrysteroTransportOptions)
   room.onPeerJoin = (peerId) => handlers.onPeerJoin(peerId)
   room.onPeerLeave = (peerId) => handlers.onPeerLeave(peerId)
 
-  handlers.onStatus('connected')
+  // 信令健康检查：房间对象是同步返回的，但中继连接是异步的。
+  // 早期版本直接报"已连接"会误导用户；这里改为轮询中继 socket 的真实状态。
+  const getRelaySockets = (mod as unknown as { getRelaySockets?: () => unknown }).getRelaySockets
+  let relayTimer: ReturnType<typeof setInterval> | null = null
+  const checkRelays = (): boolean => {
+    const raw = getRelaySockets?.() ?? []
+    const list: unknown[] = typeof (raw as Iterable<unknown>)?.[Symbol.iterator] === 'function' ? [...(raw as Iterable<unknown>)] : Object.values(raw as Record<string, unknown>)
+    return list.some((socket) => (socket as { readyState?: number })?.readyState === 1)
+  }
+  let relayAttempts = 0
+  relayTimer = setInterval(() => {
+    relayAttempts += 1
+    if (checkRelays()) {
+      handlers.onStatus('connected')
+      if (relayTimer) clearInterval(relayTimer)
+      relayTimer = null
+      return
+    }
+    if (relayAttempts >= 12) {
+      // 12 秒仍没有任何中继连接 → 明确失败并提示降级方案
+      handlers.onStatus('failed', '公共信令连不上（可切换 Torrent 或改用手动直连）')
+      if (relayTimer) clearInterval(relayTimer)
+      relayTimer = null
+    }
+  }, 1000)
+  handlers.onStatus('connecting', '正在连接公共信令…')
 
   // 幂等的 leave：Trystero 内部已注册 beforeunload 清理，这里只保证不会重复调用
   let leaving = false
@@ -99,13 +124,15 @@ export async function createTrysteroTransport(options: TrysteroTransportOptions)
     kind: 'trystero',
     send: (msg: Wire, to?: string) => {
       void action.send(msg, to ? { target: to } : undefined).catch((err: Error) => {
-        handlers.onStatus('error', String(err?.message ?? err))
+        handlers.onStatus('failed', String(err?.message ?? err))
       })
     },
     getPeers: () => Object.keys(room.getPeers()),
     leave: async () => {
+      if (relayTimer) clearInterval(relayTimer)
+      relayTimer = null
       await leaveRoom()
-      handlers.onStatus('closed' as TransportStatus)
+      handlers.onStatus('closed')
     },
   }
 }

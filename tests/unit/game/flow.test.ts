@@ -91,6 +91,26 @@ describe('行动经济与校验', () => {
     expectCode(run(s, P1, { type: 'attack', unitId: cat.id, targetId: target.id }, data), 'INDIRECT_MOVED')
   })
 
+  it('移动事件携带逐格路径（动画沿引擎算出的路径播放）', () => {
+    let s = playing()
+    const unit = s.units.find((u) => u.owner === P1)!
+    const result = run(s, P1, { type: 'move', unitId: unit.id, x: 3, y: 6 }, data)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const event = result.events.find((e) => e.type === 'move')
+    expect(event).toBeDefined()
+    if (!event || event.type !== 'move') return
+    // 路径终点 = 目标格，且每一步都是相邻格（渲染层据此逐格播放）
+    expect(event.path[event.path.length - 1]).toEqual({ x: 3, y: 6 })
+    expect(event.path.length).toBeGreaterThanOrEqual(2)
+    let prev = { x: unit.x, y: unit.y }
+    for (const step of event.path) {
+      expect(Math.abs(step.x - prev.x) + Math.abs(step.y - prev.y)).toBe(1)
+      prev = step
+    }
+    void s
+  })
+
   it('待机让单位结束行动', () => {
     let s = playing()
     const unit = s.units.find((u) => u.owner === P1)!

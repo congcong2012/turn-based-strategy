@@ -101,6 +101,13 @@ test.describe('移动端（Pixel 5 视口 + 触摸）', () => {
 
     await tapTile(alice, 11, 4)
     await expect(alice.getByTestId('unit-panel')).toBeVisible()
+
+    // M7：触屏需要双击确认 —— 第一次点只提示，不执行
+    await tapTile(alice, 11, 7)
+    await expect(alice.getByTestId('game-hint')).toContainText('再点一次确认移动')
+    await expect.poll(() => unitY(alice, 'm-a')).toBe(4)
+
+    // 第二次点同一格才真的移动
     await tapTile(alice, 11, 7)
     await expect.poll(() => unitY(alice, 'm-a')).toBe(7)
   })

@@ -106,6 +106,25 @@ M1 的"服务端校验"体现在房主侧：
 M2 起扩展为 GDD 8.6 的完整指令集与错误码
 （`move/attack/capture/produce/wait/endTurn` + `NOT_YOUR_TURN / OUT_OF_RANGE / ...`）。
 
+## 7. 手动直连（降级通道，M7）
+
+当公共信令不可用时，两端可以用**带外交换 SDP** 建立同样的房间连接：
+
+```
+房主                                   好友
+  createOffer + ICE 收集完成
+  → 连接码 AT1:<base64>   ──微信/QQ──▶  setRemoteDescription
+                                          createAnswer + ICE 收集完成
+  setRemoteDescription    ◀──微信/QQ──   连接码 AT1:<base64>
+  DataChannel('wire') 打开 ────────────  DataChannel('wire') 打开
+```
+
+- 连接码格式：`AT1:` + base64(UTF-8 JSON `{ type: 'offer' | 'answer', sdp }`)，纯 ASCII，可粘贴传输
+- **数据通道之上跑的是同一套 Wire 协议**（`hello` / `hostHello` / `lobby` / `game` / `cmd` / `cmdRejected`），
+  因此房间码、房主权威、指令校验、断线重连、战报全部照旧
+- 限制：仅 2 人；需要一次带外通信；无 TURN 时双方都在对称 NAT 后可能连不上（家庭网络一般可用）
+- 传输实现见 `src/net/manualTransport.ts`，编解码是纯函数（`encodeSignal` / `decodeSignal`）并有单测覆盖
+
 ## 6. 断线重连时序（M3）
 
 ```

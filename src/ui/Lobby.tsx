@@ -5,6 +5,9 @@ import type { Identity } from '../app/identity'
 import type { RoomView } from '../net/roomSession'
 import type { SignalStrategy, TransportKind } from '../net/types'
 import type { RoomActions } from '../hooks/useRoom'
+import { ConnectStatusBadge } from './ConnectStatusBadge'
+import { ConnectionHelp } from './ConnectionHelp'
+import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { ManualSdpPanel } from './ManualSdpPanel'
 import { PlayerList } from './PlayerList'
 
@@ -36,8 +39,9 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
   const [code, setCode] = useState(initialRoomCode ?? '')
   const [rename, setRename] = useState(view.nickname)
   const [copied, setCopied] = useState(false)
+  const [mode, setMode] = useState<'p2p' | 'manual'>('p2p')
 
-  const inRoom = view.roomCode !== null && view.role !== 'idle'
+  const inRoom = view.roomCode !== null && view.role !== 'idle' && (!view.manual || view.manual.phase === 'connected')
 
   useEffect(() => {
     setRename(view.nickname)
@@ -79,12 +83,23 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
           <span>
             身份：<b data-testid="role-label">{ROLE_TEXT[view.role] ?? view.role}</b>
           </span>
+          <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
           <span>
             在线 peer：<b data-testid="peer-count">{view.peerCount}</b>
           </span>
         </div>
         {view.statusDetail ? <p className="muted small">详情：{view.statusDetail}</p> : null}
       </section>
+
+      <ConnectionHelp
+        view={view}
+        onSwitchStrategy={() => actions.setStrategy(view.strategy === 'mqtt' ? 'torrent' : 'mqtt')}
+        onManual={!inRoom ? () => setMode('manual') : undefined}
+      />
+
+      {view.manual && view.manual.phase !== 'connected' ? (
+        <ManualSdpPanel view={view} onSubmitCode={actions.submitManualCode} onCancel={() => actions.leave()} />
+      ) : null}
 
       {!inRoom ? (
         <section className="panel" data-testid="join-panel">
@@ -117,20 +132,66 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
             </div>
           </label>
 
-          <div className="row">
+          <div className="row mode-row">
             <button
               type="button"
-              className="primary"
-              data-testid="join-button"
-              disabled={!isValidRoomCode(code) || view.status === 'connecting'}
-              onClick={() => actions.join(code, nickname)}
+              data-testid="mode-p2p"
+              className={mode === 'p2p' ? 'picked' : ''}
+              onClick={() => setMode('p2p')}
             >
-              加入房间
+              公共信令（默认）
             </button>
-            <span className="muted small">
-              同一个房间码 = 同一个房间；第一个进入的人自动成为房主，2–4 人均可开局。
-            </span>
+            <button
+              type="button"
+              data-testid="mode-manual"
+              className={mode === 'manual' ? 'picked' : ''}
+              onClick={() => setMode('manual')}
+            >
+              手动直连（备用）
+            </button>
           </div>
+
+          {mode === 'p2p' ? (
+            <div className="row">
+              <button
+                type="button"
+                className="primary"
+                data-testid="join-button"
+                disabled={!isValidRoomCode(code) || view.status === 'connecting'}
+                onClick={() => actions.join(code, nickname)}
+              >
+                加入房间
+              </button>
+              <span className="muted small">
+                同一个房间码 = 同一个房间；第一个进入的人自动成为房主，2–4 人均可开局。
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="row">
+                <button
+                  type="button"
+                  className="primary"
+                  data-testid="manual-host"
+                  disabled={!isValidRoomCode(code)}
+                  onClick={() => actions.startManualPairing(code, 'host', nickname)}
+                >
+                  我是房主：生成邀请码
+                </button>
+                <button
+                  type="button"
+                  data-testid="manual-guest"
+                  disabled={!isValidRoomCode(code)}
+                  onClick={() => actions.startManualPairing(code, 'guest', nickname)}
+                >
+                  我是加入方：粘贴邀请码
+                </button>
+              </div>
+              <p className="muted small">
+                双方用同一个房间码；连接码通过微信/QQ 互发。仅支持 2 人，公共信令恢复后建议改回默认方式。
+              </p>
+            </>
+          )}
         </section>
       ) : (
         <section className="panel" data-testid="room-panel">
@@ -259,7 +320,7 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
         </p>
       ) : null}
 
-      <ManualSdpPanel />
+      <DiagnosticsPanel view={view} />
 
       <footer className="app-footer muted small">
         纯静态托管 · 无后端 / 无数据库 · 房主权威 · 客户端只发指令

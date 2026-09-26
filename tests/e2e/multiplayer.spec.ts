@@ -40,6 +40,8 @@ async function setupThreePlayers(context: BrowserContext) {
     [carol, 'mp-c', '丙将军'],
   ]
   for (const [page, id, nick] of seats) {
+    page.on('pageerror', (e) => console.log('[' + nick + ' pageerror]', String(e.message).slice(0, 400)))
+    page.on('console', (m) => { if (m.type() === 'error') console.log('[' + nick + ' console]', m.text().slice(0, 300)) })
     await page.goto(localUrl(id, nick))
     await joinRoom(page, ROOM, nick)
   }

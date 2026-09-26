@@ -31,6 +31,12 @@ export interface RoomActions {
   skipDisconnectedTurn: () => void
   /** 房主：选择地图（null = 按人数自动） */
   setMap: (mapId: string | null) => void
+  /** 手动直连：开始配对（host = 生成邀请码，guest = 等待粘贴邀请码） */
+  startManualPairing: (roomCode: string, role: 'host' | 'guest', nickname: string) => void
+  /** 手动直连：提交对方的连接码 */
+  submitManualCode: (code: string) => void
+  /** 一键重连 */
+  retryConnection: () => void
 }
 
 export interface UseRoomResult {
@@ -68,6 +74,11 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     offlinePlayers: [],
     log: [],
     events: [],
+    connection: 'idle',
+    transportStatus: 'idle',
+    transportDetail: null,
+    manual: null,
+    errors: [],
   }
 }
 
@@ -174,6 +185,23 @@ export function useRoom(): UseRoomResult {
   const sendCommand = useCallback((cmd: Command) => sessionRef.current?.sendCommand(cmd), [])
   const skipDisconnectedTurn = useCallback(() => sessionRef.current?.skipDisconnectedTurn(), [])
   const setMap = useCallback((mapId: string | null) => sessionRef.current?.setMap(mapId), [])
+  const startManualPairing = useCallback(
+    (roomCode: string, role: 'host' | 'guest', nickname: string) => {
+      const clean = roomCode
+      const displayName = nickname.trim().slice(0, 16) || identity.nickname
+      if (!identity.ephemeral) {
+        writeStoredPlayerId(identity.playerId)
+        writeStoredNickname(displayName)
+      }
+      writeLastRoom(clean)
+      void startSession(clean, displayName).then((session) => session.startManualPairing(clean, role))
+    },
+    [identity, startSession],
+  )
+  const submitManualCode = useCallback((code: string) => {
+    void sessionRef.current?.submitManualCode(code)
+  }, [])
+  const retryConnection = useCallback(() => sessionRef.current?.retryConnection(), [])
 
 
   /** 切换信令策略：房间内切换会离开并以新策略重新加入 */
@@ -194,8 +222,34 @@ export function useRoom(): UseRoomResult {
   )
 
   const actions = useMemo<RoomActions>(
-    () => ({ join, leave, setReady, setNickname, startGame, setStrategy, sendCommand, skipDisconnectedTurn, setMap }),
-    [join, leave, setReady, setNickname, startGame, setStrategy, sendCommand, skipDisconnectedTurn, setMap],
+    () => ({
+      join,
+      leave,
+      setReady,
+      setNickname,
+      startGame,
+      setStrategy,
+      sendCommand,
+      skipDisconnectedTurn,
+      setMap,
+      startManualPairing,
+      submitManualCode,
+      retryConnection,
+    }),
+    [
+      join,
+      leave,
+      setReady,
+      setNickname,
+      startGame,
+      setStrategy,
+      sendCommand,
+      skipDisconnectedTurn,
+      setMap,
+      startManualPairing,
+      submitManualCode,
+      retryConnection,
+    ],
   )
 
   return {

@@ -28,12 +28,17 @@ import {
   upsertPlayer,
 } from '../app/lobbyReducer'
 import { isValidRoomCode, normalizeRoomCode } from '../app/roomCode'
+import { deriveConnectionState } from './connectionState'
+import type { ConnectionState } from './connectionState'
+import { createManualTransport } from './manualTransport'
+import type { ManualRole, ManualTransport } from './manualTransport'
 import { defaultStorage, loadGame, saveGame } from './gameStore'
 import type { GameStorage } from './gameStore'
 import { applyCommand } from '../game/commands'
 import { describeEvents } from '../game/logText'
 import type { LogContext } from '../game/logText'
 import { defaultMapFor } from '../game/data'
+import { describeErrorCode } from '../game/errorText'
 import { createGame } from '../game/state'
 import { buildingType, unitType } from '../game/data'
 import type { Command, GameEvent, GameState } from '../game/types'
@@ -77,6 +82,15 @@ export interface RoomView {
   game: GameState | null
   /** 房主选择的地图（null = 自动） */
   mapId: string | null
+  /** 用户可见的连接状态（连接中 / 已连接 / 等待对手 / 重连中 / 失败） */
+  connection: ConnectionState
+  /** 传输层原始状态与说明（诊断面板用） */
+  transportStatus: TransportStatus
+  transportDetail: string | null
+  /** 手动直连配对状态（未使用则为 null） */
+  manual: ManualPairingState | null
+  /** 最近的错误记录（诊断面板用，最新的在最后） */
+  errors: Array<{ at: number; text: string }>
   /** 当前是否轮到我行动 */
   myTurn: boolean
   /** M3：对局是否被暂停（房主掉线，或轮到掉线玩家） */
@@ -93,6 +107,12 @@ export interface RoomView {
 }
 
 export type LoggedEvent = { seq: number; event: GameEvent }
+
+/** 手动直连（SDP 交换）的配对状态 */
+export type ManualPhase = 'creating' | 'need-offer' | 'need-answer' | 'connecting' | 'connected' | 'failed'
+export type ManualPairingState = { role: ManualRole; code: string | null; phase: ManualPhase; error: string | null }
+
+export type { ConnectionState } from './connectionState'
 
 export interface RoomSessionOptions {
   playerId: PlayerId
@@ -122,6 +142,12 @@ export interface RoomSession {
   sendCommand: (cmd: Command) => void
   /** 房主：跳过掉线玩家的回合（仅当其确实掉线时可用） */
   skipDisconnectedTurn: () => void
+  /** M7：手动直连（公共信令不可用时的备用方案）——开始配对 */
+  startManualPairing: (roomCode: string, role: ManualRole) => Promise<void>
+  /** M7：提交对方给的连接码（好友：邀请码；房主：应答码） */
+  submitManualCode: (code: string) => Promise<void>
+  /** M7：一键重连（断开后按当前信令策略重新加入） */
+  retryConnection: () => void
   dispose: () => void
 }
 
@@ -152,6 +178,9 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   let log: string[] = []
   let recentEvents: LoggedEvent[] = []
   let eventSeq = 0
+  let manualTransport: ManualTransport | null = null
+  let manual: ManualPairingState | null = null
+  let errorLog: Array<{ at: number; text: string }> = []
 
   const peerToPlayer = new Map<PeerId, PlayerId>()
   const playerToPeer = new Map<PlayerId, PeerId>()
@@ -249,7 +278,30 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       offlinePlayers: players.filter((p) => !p.connected).map((p) => p.playerId),
       log,
       events: recentEvents,
+      connection: deriveConnection(),
+      transportStatus: status,
+      transportDetail: statusDetail,
+      manual,
+      errors: errorLog,
     }
+  }
+
+  /**
+   * 用户可见的连接状态：
+   *  - 传输层明确失败 → failed
+   *  - 还在连接 / 刚加入 → connecting
+   *  - 有 peer → connected
+   *  - 没有 peer：对局中或对手席位存在 → reconnecting（等待重连）；否则 waiting（等对手进房）
+   */
+  function deriveConnection(): ConnectionState {
+    return deriveConnectionState({
+      role,
+      status,
+      detail: statusDetail,
+      peerCount: transport?.getPeers().length ?? 0,
+      expectedPlayers: lobby?.players.filter((p) => p.connected).length ?? 0,
+      inGame: game !== null,
+    })
   }
 
   /** 把内核事件翻译成战报（用"变更前"的状态解析已被歼灭单位/已易主据点的名字） */
@@ -292,7 +344,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     const result = applyCommand(game, playerId, cmd)
     if (!result.ok) {
       if (peerId) transport?.send({ t: 'cmdRejected', from: selfId, code: result.code }, peerId)
-      else error = '指令被拒绝：' + result.code
+      else recordError('指令被拒绝：' + describeErrorCode(result.code))
       emit()
       return
     }
@@ -304,9 +356,30 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     emit()
   }
 
+  /**
+   * 只在视图**真正变化**时通知 React。
+   * 之前每个 tick（250ms）都无条件 emit，导致整个界面每秒重渲染 4 次：
+   * 页面永远不空闲（移动端发热、自动化测试里元素"永不稳定"），纯属浪费。
+   */
+  let lastSignature = ''
   function emit(): void {
     if (disposed) return
-    options.onChange?.(buildView())
+    const view = buildView()
+    let signature: string
+    try {
+      signature = JSON.stringify(view)
+    } catch {
+      signature = String(Math.random())
+    }
+    if (signature === lastSignature) return
+    lastSignature = signature
+    options.onChange?.(view)
+  }
+
+  /** 记录一条错误：既用于界面提示，也进诊断面板的历史 */
+  function recordError(text: string): void {
+    error = text
+    errorLog = [...errorLog, { at: now(), text }].slice(-20)
   }
 
   function sendToPlayer(msg: Wire, playerId: PlayerId): void {
@@ -460,7 +533,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         break
       }
       case 'cmdRejected': {
-        error = '指令被拒绝：' + msg.code
+        recordError('指令被拒绝：' + describeErrorCode(msg.code))
         break
       }
       case 'lobby': {
@@ -492,7 +565,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       }
       case 'roomFull': {
         void teardown().then(() => {
-          notice = '房间已满：MVP 每房最多 2 人，请换一个房间码'
+          notice = '房间已满：每房最多 4 人，请换一个房间码'
           emit()
         })
         break
@@ -545,7 +618,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     onStatus: (next: TransportStatus, detail?: string) => {
       status = next
       statusDetail = detail ?? null
-      if (next === 'error' && detail) error = detail
+      if (next === 'failed' && detail) recordError(detail)
+      if (manual && next === 'connected') manual = { ...manual, phase: 'connected', error: null }
       emit()
     },
   }
@@ -586,9 +660,44 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     lastLobbyRev = -1
     status = 'idle'
     statusDetail = null
+    manualTransport = null
+    manual = null
+    errorLog = []
     peerToPlayer.clear()
     playerToPeer.clear()
     helloSent.clear()
+  }
+
+  /** 进入房间前的状态复位（join 与手动直连共用） */
+  function resetForRoom(normalized: string): void {
+    error = null
+    notice = null
+    roomCode = normalized
+    role = 'joining'
+    ready = false
+    lobby = null
+    game = null
+    log = []
+    recentEvents = []
+    eventSeq = 0
+    lastLobbyHost = null
+    lastLobbyRev = -1
+    helloAttempts = 0
+    manual = null
+    helloSent.clear()
+    peerToPlayer.clear()
+    playerToPeer.clear()
+    election = createElection(selfId, nickname, now(), 'LOBBY')
+    emit()
+  }
+
+  /** 传输就绪后启动会话循环（join 与手动直连共用） */
+  function activate(created: Transport): void {
+    transport = created
+    sendHello()
+    if (timer) clearInterval(timer)
+    timer = setInterval(runTick, tickMs)
+    emit()
   }
 
   return {
@@ -602,35 +711,79 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         emit()
         return
       }
-      error = null
-      notice = null
-      roomCode = normalized
-      role = 'joining'
-      ready = false
-      lobby = null
-      game = null
-      log = []
-      recentEvents = []
-      eventSeq = 0
-      lastLobbyHost = null
-      lastLobbyRev = -1
-      helloAttempts = 0
-      helloSent.clear()
-      peerToPlayer.clear()
-      playerToPeer.clear()
-      election = createElection(selfId, nickname, now(), 'LOBBY')
-      emit()
-
+      resetForRoom(normalized)
       const created = await options.transportFactory(handlers)
       if (disposed) {
         await created.leave()
         return
       }
-      transport = created
-      sendHello()
-      if (timer) clearInterval(timer)
-      timer = setInterval(runTick, tickMs)
+      activate(created)
+    },
+
+    async startManualPairing(code: string, pairingRole: ManualRole): Promise<void> {
+      if (disposed) return
+      const normalized = normalizeRoomCode(code)
+      if (!isValidRoomCode(normalized)) {
+        error = '房间码必须是 6 位（仅使用易辨识字符）'
+        emit()
+        return
+      }
+      resetForRoom(normalized)
+      const created = createManualTransport({ role: pairingRole, handlers })
+      if (disposed) {
+        await created.leave()
+        return
+      }
+      activate(created)
+      manualTransport = created
+      manual = { role: pairingRole, code: null, phase: pairingRole === 'host' ? 'creating' : 'need-offer', error: null }
+
+      if (pairingRole === 'host') {
+        // 手动直连时角色是明确的：邀请方就是房主，不必等 3 秒
+        if (election) election = { ...election, hostId: selfId, selfDeclared: true }
+        role = 'host'
+        lobby = lobbyFromRecords()
+        maybeRestoreGame()
+        broadcastLobby()
+        try {
+          const offerCode = await created.createOfferCode()
+          if (manual) manual = { ...manual, code: offerCode, phase: 'need-answer' }
+        } catch (err) {
+          const message = String((err as Error)?.message ?? err)
+          if (manual) manual = { ...manual, phase: 'failed', error: message }
+          error = message
+        }
+      } else {
+        role = 'client'
+      }
       emit()
+    },
+
+    async submitManualCode(code: string): Promise<void> {
+      const pairing = manual
+      const mt = manualTransport
+      if (!pairing || !mt) return
+      try {
+        if (pairing.role === 'guest') {
+          const answerCode = await mt.acceptOfferCode(code)
+          manual = { ...pairing, code: answerCode, phase: 'need-answer', error: null }
+          notice = '把上面的应答码发回给房主，等待他粘贴'
+        } else {
+          await mt.acceptAnswerCode(code)
+          manual = { ...pairing, phase: 'connecting', error: null }
+        }
+      } catch (err) {
+        const message = String((err as Error)?.message ?? err)
+        manual = { ...pairing, phase: 'failed', error: message }
+        error = message
+      }
+      emit()
+    },
+
+    retryConnection(): void {
+      const code = roomCode
+      if (!code) return
+      void this.leave().then(() => this.join(code))
     },
 
     async leave(): Promise<void> {

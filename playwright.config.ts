@@ -27,7 +27,14 @@ export default defineConfig({
   projects: [
     {
       name: 'local',
-      testMatch: /(local|game|reconnect|multiplayer)\.spec\.ts/,
+      testMatch: /(local|game|reconnect|multiplayer|connection-status)\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], baseURL: DEV_URL },
+    },
+    {
+      // 手动直连用真实 WebRTC（不走 local 传输），因此单独一个 project
+      name: 'manual',
+      testMatch: /manual-pair\.spec\.ts/,
+      timeout: 180_000,
       use: { ...devices['Desktop Chrome'], baseURL: DEV_URL },
     },
     {

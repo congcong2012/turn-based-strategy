@@ -78,12 +78,12 @@ describe('对局指令的房间集成（房主权威）', () => {
     bob.session.sendCommand({ type: 'deploy', unitType: 'sword', x: 11, y: 2 })
     await vi.advanceTimersByTimeAsync(100)
     expect(bob.view.game?.units).toHaveLength(1)
-    expect(bob.view.error).toContain('DEPLOY_ZONE_INVALID')
+    expect(bob.view.error).toContain('部署区')
 
     // 非法：预算不足
     bob.session.sendCommand({ type: 'deploy', unitType: 'heavyCav', x: 10, y: 22 })
     await vi.advanceTimersByTimeAsync(100)
-    expect(bob.view.error).toContain('DEPLOY_BUDGET_EXCEEDED')
+    expect(bob.view.error).toContain('部署预算不够')
   })
 
   it('部署完成 → PLAYING，只有当前玩家能行动', async () => {
@@ -111,7 +111,7 @@ describe('对局指令的房间集成（房主权威）', () => {
     const unit = bob.view.game!.units.find((u) => u.owner === 'bob')!
     bob.session.sendCommand({ type: 'move', unitId: unit.id, x: 11, y: 21 })
     await vi.advanceTimersByTimeAsync(100)
-    expect(bob.view.error).toContain('NOT_YOUR_TURN')
+    expect(bob.view.error).toContain('还没轮到你行动')
     expect(bob.view.game?.units.find((u) => u.id === unit.id)?.y).toBe(22)
 
     // 房主移动自己的单位 → 双方同步

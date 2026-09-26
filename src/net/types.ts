@@ -8,10 +8,11 @@ export type PlayerId = string
 /** 信令策略：mqtt（实测可达）与 torrent（备用降级） */
 export type SignalStrategy = 'mqtt' | 'torrent'
 /** 传输实现：trystero（真实 P2P）或 local（同机 BroadcastChannel，仅 DEV 调试） */
-export type TransportKind = 'trystero' | 'local'
+export type TransportKind = 'trystero' | 'local' | 'manual'
 
 export type Phase = 'LOBBY' | 'DEPLOY' | 'PLAYING' | 'PAUSED' | 'GAME_OVER'
-export type TransportStatus = 'idle' | 'connecting' | 'connected' | 'error' | 'closed'
+/** 连接状态：连接中 / 已连接 / 重连中 / 失败（M7 补齐"重连中"） */
+export type TransportStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'closed'
 export type RoomRole = 'idle' | 'joining' | 'host' | 'client'
 
 export type LobbyPlayer = {

@@ -7,7 +7,12 @@ import type { RoomView } from '../net/roomSession'
 import type { RoomActions } from '../hooks/useRoom'
 import type { GameState, PlayerId } from '../game/types'
 import { BoardCanvas } from './BoardCanvas'
+import { ConnectStatusBadge } from './ConnectStatusBadge'
+import { ConnectionHelp } from './ConnectionHelp'
+import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { isSoundOn, playSound, setSoundOn, soundForEvent } from './sound'
+import { EMPTY_TAP_STATE, isTouchDevice, nextTapState } from './tapConfirm'
+import type { TapConfirmState } from './tapConfirm'
 import type { BoardView } from '../render/boardApp'
 
 export interface GameScreenProps {
@@ -32,6 +37,8 @@ export function GameScreen({ view, actions }: GameScreenProps) {
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
+  const [tapState, setTapState] = useState<TapConfirmState>(EMPTY_TAP_STATE)
+  const touch = useMemo(() => isTouchDevice(), [])
 
   const myIndex = game.players.indexOf(view.selfId)
   const map = getMap(game.mapId)
@@ -50,6 +57,29 @@ export function GameScreen({ view, actions }: GameScreenProps) {
   const targets = useMemo(() => {
     if (!selectedUnit || !view.myTurn) return []
     return attackableTargets(game, selectedUnit, DATA).map((u) => u.x + ',' + u.y)
+  }, [game, selectedUnit, view.myTurn])
+
+  // 攻击范围：切比雪夫距离落在 [rangeMin, rangeMax] 的格子（红色边框）
+  const { attackRange, attackTooClose } = useMemo(() => {
+    const inRange: string[] = []
+    const tooClose: string[] = []
+    if (!selectedUnit || !view.myTurn) return { attackRange: inRange, attackTooClose: tooClose }
+    const type = unitType(selectedUnit.type, DATA)
+    const map = getMap(game.mapId)
+    for (let dy = -type.rangeMax; dy <= type.rangeMax; dy += 1) {
+      for (let dx = -type.rangeMax; dx <= type.rangeMax; dx += 1) {
+        const d = Math.max(Math.abs(dx), Math.abs(dy))
+        if (d === 0) continue
+        const x = selectedUnit.x + dx
+        const y = selectedUnit.y + dy
+        if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue
+        if (d < type.rangeMin) tooClose.push(x + ',' + y)
+        else if (d <= type.rangeMax) inRange.push(x + ',' + y)
+      }
+    }
+    // 被单位占据的格子由红色填充表示，这里去掉重复边框
+    const occupied = new Set(game.units.map((u) => u.x + ',' + u.y))
+    return { attackRange: inRange.filter((k) => !occupied.has(k)), attackTooClose: tooClose }
   }, [game, selectedUnit, view.myTurn])
 
   // DEV/E2E：把权威状态暴露出去，便于自动化断言（生产构建不生效）
@@ -99,6 +129,8 @@ export function GameScreen({ view, actions }: GameScreenProps) {
     selectedBuildingId,
     deployZoneIndex: isDeploy && !myDeploy?.done ? myIndex : null,
     movePaths,
+    attackRange,
+    attackTooClose,
   }
 
   const clearSelection = useCallback(() => {
@@ -141,18 +173,31 @@ export function GameScreen({ view, actions }: GameScreenProps) {
         setSelectedUnitId(unit.id)
         setSelectedBuildingId(null)
         setHint(null)
+        setTapState(EMPTY_TAP_STATE)
         return
       }
 
-      // 2) 攻击射程内的敌人
+      // 2) 攻击射程内的敌人（触屏需要再点一次确认）
       if (selectedUnit && unit && unit.owner !== view.selfId && targets.includes(tile)) {
+        const { state, execute } = nextTapState(tapState, 'attack:' + tile, Date.now(), touch)
+        setTapState(state)
+        if (!execute) {
+          setHint('再点一次确认攻击 ' + DATA.units[unit.type].name)
+          return
+        }
         actions.sendCommand({ type: 'attack', unitId: selectedUnit.id, targetId: unit.id })
         setHint(null)
         return
       }
 
-      // 3) 移动到可达格
+      // 3) 移动到可达格（触屏需要再点一次确认）
       if (selectedUnit && reachable.includes(tile)) {
+        const { state, execute } = nextTapState(tapState, 'move:' + tile, Date.now(), touch)
+        setTapState(state)
+        if (!execute) {
+          setHint('再点一次确认移动到这里')
+          return
+        }
         actions.sendCommand({ type: 'move', unitId: selectedUnit.id, x, y })
         setHint(null)
         return
@@ -168,7 +213,8 @@ export function GameScreen({ view, actions }: GameScreenProps) {
 
       clearSelection()
     },
-    [actions, armedType, clearSelection, frozen, game, isDeploy, isOver, myDeploy?.done, reachable, selectedUnit, targets, view.myTurn, view.selfId],
+    // 注意：tapState 必须在依赖里，否则回调会一直闭包着"第一次点击"的状态，双击永远确认不了
+    [actions, armedType, clearSelection, frozen, game, isDeploy, isOver, myDeploy?.done, reachable, selectedUnit, tapState, targets, touch, view.myTurn, view.selfId],
   )
 
   const canCapture =
@@ -199,6 +245,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
         <span className="hud-item">
           资金 <b data-testid="funds-label">{game.funds[view.selfId] ?? 0}</b>
         </span>
+        <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
         <span className="hud-item muted small">房间 {view.roomCode}</span>
         <button type="button" data-testid="sound-toggle" onClick={toggleSound} title="音效开关">
           {soundOn ? '🔊 音效' : '🔇 静音'}
@@ -222,6 +269,8 @@ export function GameScreen({ view, actions }: GameScreenProps) {
           ) : null}
         </div>
       ) : null}
+
+      <ConnectionHelp view={view} onSwitchStrategy={() => actions.setStrategy(view.strategy === 'mqtt' ? 'torrent' : 'mqtt')} />
 
       {!view.paused && view.offlinePlayers.length > 0 ? (
         <div className="pause-banner soft" data-testid="offline-hint">
@@ -345,6 +394,18 @@ export function GameScreen({ view, actions }: GameScreenProps) {
                   <p className="muted small">
                     {selectedUnit.acted ? '本回合已行动' : selectedUnit.moved ? '已移动，可继续攻击' : '可移动'}
                   </p>
+                  {(() => {
+                    const b = buildingAt(game, selectedUnit.x, selectedUnit.y)
+                    if (!b || !unitType(selectedUnit.type, DATA).capture || b.owner === view.selfId) return null
+                    const points = b.capture?.points ?? 0
+                    const step = Math.max(1, Math.floor(selectedUnit.hp / 10))
+                    const need = Math.max(1, Math.ceil((DATA.capturePoints - points) / step))
+                    return (
+                      <p className="muted small" data-testid="capture-progress">
+                        占领进度 {points}/{DATA.capturePoints} · 本次 +{step} · 还需 {need} 次
+                      </p>
+                    )
+                  })()}
                   <div className="row">
                     <button
                       type="button"
@@ -400,15 +461,32 @@ export function GameScreen({ view, actions }: GameScreenProps) {
               {game.pending.length > 0 ? (
                 <section>
                   <h2>生产队列</h2>
-                  <p className="muted small" data-testid="pending-list">
-                    {game.pending.map((p) => DATA.units[p.type].name).join('、')}
-                  </p>
+                  <ul className="log-list" data-testid="pending-list">
+                    {game.pending.map((item) => {
+                      const barracks = game.buildings.find((b) => b.id === item.buildingId)
+                      const occupied = barracks ? game.units.some((u) => u.x === barracks.x && u.y === barracks.y) : true
+                      const mine = item.owner === view.selfId
+                      return (
+                        <li key={item.id} data-testid={'pending-' + item.id}>
+                          {mine ? '我方' : nameOf(view, item.owner)}：{DATA.units[item.type].name} ·{' '}
+                          {barracks ? '兵营(' + barracks.x + ',' + barracks.y + ')' : '兵营已失守'} ·{' '}
+                          {!barracks || occupied ? '出战位被占，顺延至下一回合' : '下一回合出场'}
+                        </li>
+                      )
+                    })}
+                  </ul>
                 </section>
               ) : null}
             </>
           )}
 
           {hint ? <p className="alert notice small" data-testid="game-hint">{hint}</p> : null}
+          {view.error ? (
+            <p className="alert error small" data-testid="game-error">
+              {view.error}
+            </p>
+          ) : null}
+          <DiagnosticsPanel view={view} />
           <p className="muted small">
             地图：{map.name}（{map.width}×{map.height}） · 拖拽平移，滚轮缩放
           </p>

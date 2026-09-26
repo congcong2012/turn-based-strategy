@@ -23,13 +23,27 @@ export interface BoardView {
   deployZoneIndex: number | null
   /** M5：单位 → 本次移动的逐格路径（含终点），用于播放移动动画 */
   movePaths?: Record<string, Array<{ x: number; y: number }>>
+  /** M7：选中单位的攻击范围格（"x,y"），用红色边框标出 */
+  attackRange?: string[]
+  /** M7：射程"太近"打不到的格（仅间接单位，灰色边框） */
+  attackTooClose?: string[]
 }
 
 const OWNER_COLORS = [0xc8503c, 0x3fa7a0, 0xd9a441, 0x8a6fd0]
 const NEUTRAL = 0x6b6255
 // 小屏（手机 393px 宽）要能一次看全 24×24 棋盘：1152px 宽 → 需要 ~0.34 倍，因此下限放到 0.2
 const MIN_SCALE = 0.2
-const MAX_SCALE = 2
+/** 桌面最多放大 2 倍；触屏设备放到 3.5 倍（M7：手机上看得更清楚） */
+const MAX_SCALE_DESKTOP = 2
+const MAX_SCALE_TOUCH = 3.5
+
+function maxScaleForDevice(): number {
+  try {
+    return globalThis.matchMedia?.('(pointer: coarse)').matches ? MAX_SCALE_TOUCH : MAX_SCALE_DESKTOP
+  } catch {
+    return MAX_SCALE_DESKTOP
+  }
+}
 const MOVE_ANIM_MS = 220
 const FLASH_MS = 380
 const FLOATER_MS = 700
@@ -55,6 +69,7 @@ export class BoardApp {
 
   private view: BoardView | null = null
   private data: GameData = DATA
+  private maxScale = maxScaleForDevice()
   private scale = 1
   private offsetX = 0
   private offsetY = 0
@@ -76,7 +91,7 @@ export class BoardApp {
   private animating = false
   private flashes = new Map<string, number>()
   private floaters: Array<{ text: string; x: number; y: number; color: number; startAt: number }> = []
-  private tickHandler: (() => void) | null = null
+  private rafId: number | null = null
   /** 多指触摸（双指缩放） */
   private pointers = new Map<number, { x: number; y: number }>()
   private pinchDistance = 0
@@ -97,6 +112,9 @@ export class BoardApp {
       // 显式走 WebGL：Pixi v8 默认会先尝试 WebGPU，在没有 GPU / 移动端模拟等环境下
       // init() 可能既不报错也不 resolve（表现为棋盘空白），棋盘 2D 渲染用 WebGL 足够。
       preference: 'webgl',
+      // 关键：不要让 Pixi 常驻 60fps 渲染。棋盘是静态的，只在"状态变化/动画播放中"才画，
+      // 否则主线程一直被占用（移动端发热、自动化测试里元素"永不稳定"）。
+      autoStart: false,
     })
     // React StrictMode 会"挂载→卸载→再挂载"：初始化期间已被 destroy 就直接收尾，
     // 否则 Pixi 会在未初始化的 Application 上调私有方法抛错，把整棵 React 树带崩。
@@ -118,8 +136,6 @@ export class BoardApp {
 
     container.appendChild(this.canvas)
     this.attachPointerHandlers()
-    this.tickHandler = () => this.onTick()
-    app.ticker.add(this.tickHandler)
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.resize(container))
       this.resizeObserver.observe(container)
@@ -131,9 +147,31 @@ export class BoardApp {
     this.tileHandler = handler
   }
 
+  private lastViewKey = ''
+
   setView(view: BoardView): void {
     this.view = view
     if (!this.initialized || this.destroyed) return
+    const key =
+      view.state.rev +
+      '|' +
+      view.state.phase +
+      '|' +
+      view.state.turnIndex +
+      '|' +
+      view.state.units.length +
+      '|' +
+      (view.selectedUnitId ?? '') +
+      '|' +
+      (view.selectedBuildingId ?? '') +
+      '|' +
+      view.reachable.length +
+      '|' +
+      view.targets.length +
+      '|' +
+      (view.deployZoneIndex ?? '')
+    if (key === this.lastViewKey) return
+    this.lastViewKey = key
     this.detectChanges(view.state)
     this.render()
   }
@@ -155,10 +193,9 @@ export class BoardApp {
     this.destroyed = true
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
-    if (this.initialized) {
-      if (this.tickHandler) this.app.ticker.remove(this.tickHandler)
-      this.app.destroy(true)
-    }
+    if (this.rafId !== null) cancelAnimationFrame(this.rafId)
+    this.rafId = null
+    if (this.initialized) this.app.destroy(true)
   }
 
   /** 对比新旧状态，决定要播放的动画（移动补间 / 受击闪红） */
@@ -206,26 +243,35 @@ export class BoardApp {
       this.animDuration = Math.max(180, Math.min(700, longestPath * 110))
       this.animating = true
     }
+    if (startedAnimation || this.flashes.size > 0 || this.floaters.length > 0) this.ensureAnimationLoop()
     this.floaters = this.floaters.filter((f) => now - f.startAt < FLOATER_MS)
     for (const [id, expiry] of [...this.flashes]) {
       if (expiry <= now) this.flashes.delete(id)
     }
   }
 
-  private onTick(): void {
-    const now = Date.now()
-    const animating = this.animating && now - this.animStartedAt < this.animDuration
-    const flashing = [...this.flashes.values()].some((expiry) => expiry > now)
-    const floating = this.floaters.some((f) => now - f.startAt < FLOATER_MS)
-    if (!animating && !flashing && !floating) {
-      if (this.animating) {
-        this.animating = false
-        this.animPath.clear()
-        this.render()
+  /** 只有存在进行中的动画/闪光/浮动数字时才持续重绘，其余时间完全静止 */
+  private ensureAnimationLoop(): void {
+    if (this.rafId !== null || this.destroyed) return
+    const step = () => {
+      this.rafId = null
+      if (this.destroyed) return
+      const now = Date.now()
+      const animating = this.animating && now - this.animStartedAt < this.animDuration
+      const flashing = [...this.flashes.values()].some((expiry) => expiry > now)
+      const floating = this.floaters.some((f) => now - f.startAt < FLOATER_MS)
+      if (!animating && !flashing && !floating) {
+        if (this.animating) {
+          this.animating = false
+          this.animPath.clear()
+          this.render()
+        }
+        return
       }
-      return
+      this.render()
+      this.rafId = requestAnimationFrame(step)
     }
-    if (this.view) this.render()
+    this.rafId = requestAnimationFrame(step)
   }
 
   /** 单位当前应画在哪：沿逐格路径做分段插值 */
@@ -271,7 +317,7 @@ export class BoardApp {
     const cw = container.clientWidth || this.app.renderer.width
     const ch = container.clientHeight || this.app.renderer.height
     const raw = Math.min(cw / width, ch / height)
-    this.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, raw))
+    this.scale = Math.max(MIN_SCALE, Math.min(this.maxScale, raw))
     this.offsetX = (cw - width * this.scale) / 2
     this.offsetY = (ch - height * this.scale) / 2
     this.applyCamera()
@@ -342,7 +388,7 @@ export class BoardApp {
           const px = info.midX - rect.left
           const py = info.midY - rect.top
           const before = this.scale
-          const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, this.scale * (info.distance / this.pinchDistance)))
+          const next = Math.max(MIN_SCALE, Math.min(this.maxScale, this.scale * (info.distance / this.pinchDistance)))
           this.scale = next
           this.offsetX = px - ((px - this.offsetX) / before) * next
           this.offsetY = py - ((py - this.offsetY) / before) * next
@@ -377,7 +423,7 @@ export class BoardApp {
       const px = event.clientX - rect.left
       const py = event.clientY - rect.top
       const before = this.scale
-      const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, this.scale * (event.deltaY < 0 ? 1.1 : 0.9)))
+      const next = Math.max(MIN_SCALE, Math.min(this.maxScale, this.scale * (event.deltaY < 0 ? 1.1 : 0.9)))
       this.scale = next
       this.offsetX = px - ((px - this.offsetX) / before) * next
       this.offsetY = py - ((py - this.offsetY) / before) * next
@@ -428,6 +474,15 @@ export class BoardApp {
       const [x, y] = key.split(',').map(Number)
       overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).fill({ color: 0x4f9fd4, alpha: 0.3 })
     }
+    // 攻击范围：红色空心边框（打不到的"太近"格用灰色）
+    for (const key of view.attackRange ?? []) {
+      const [x, y] = key.split(',').map(Number)
+      overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).stroke({ width: 2, color: 0xd94f3d, alpha: 0.55 })
+    }
+    for (const key of view.attackTooClose ?? []) {
+      const [x, y] = key.split(',').map(Number)
+      overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).stroke({ width: 1, color: 0x8a8175, alpha: 0.5 })
+    }
     for (const key of targets) {
       const [x, y] = key.split(',').map(Number)
       overlay.rect(x * TILE + 2, y * TILE + 2, TILE - 4, TILE - 4).fill({ color: 0xd94f3d, alpha: 0.35 })
@@ -440,15 +495,28 @@ export class BoardApp {
     if (selectedBuilding) {
       overlay.rect(selectedBuilding.x * TILE + 1, selectedBuilding.y * TILE + 1, TILE - 2, TILE - 2).stroke({ width: 3, color: 0xf0d27a })
     }
+    const captureLabels: Array<{ x: number; y: number; text: string; color: number }> = []
     for (const b of state.buildings) {
       if (!b.capture) continue
       const ratio = Math.min(1, b.capture.points / this.data.capturePoints)
       const ownerIndex = Math.max(0, state.players.indexOf(b.capture.playerId))
-      overlay
-        .rect(b.x * TILE + 4, b.y * TILE + TILE - 10, (TILE - 8) * ratio, 6)
-        .fill({ color: OWNER_COLORS[ownerIndex % OWNER_COLORS.length], alpha: 0.95 })
+      const color = OWNER_COLORS[ownerIndex % OWNER_COLORS.length]
+      overlay.rect(b.x * TILE + 4, b.y * TILE + TILE - 10, TILE - 8, 6).fill(0x14110f)
+      overlay.rect(b.x * TILE + 4, b.y * TILE + TILE - 10, (TILE - 8) * ratio, 6).fill({ color, alpha: 0.95 })
+      captureLabels.push({ x: b.x, y: b.y, text: b.capture.points + '/' + this.data.capturePoints, color })
     }
     this.overlayLayer.addChild(overlay)
+
+    // 占领进度文字（M7：文字 + 进度条双保险）
+    for (const item of captureLabels) {
+      const label = new PIXI.Text({
+        text: item.text,
+        style: { fontSize: 11, fill: item.color, fontWeight: '700', stroke: { color: 0x14110f, width: 3 } },
+      })
+      label.anchor.set(0.5)
+      label.position.set(item.x * TILE + TILE / 2, item.y * TILE + TILE - 16)
+      this.overlayLayer.addChild(label)
+    }
 
     // 据点
     for (const b of state.buildings) {
@@ -515,5 +583,8 @@ export class BoardApp {
       text.alpha = 1 - age * age
       this.unitLayer.addChild(text)
     }
+
+    // autoStart: false → 手动提交这一帧
+    this.app.render()
   }
 }
