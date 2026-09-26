@@ -123,7 +123,6 @@ export class BoardApp {
       return
     }
     this.app = app
-    this.initialized = true
     this.canvas = app.canvas
 
     this.world = new PIXI.Container()
@@ -134,6 +133,22 @@ export class BoardApp {
     this.world.addChild(this.terrainLayer, this.overlayLayer, this.buildingLayer, this.unitLayer)
     app.stage.addChild(this.world)
 
+    // 常驻渲染对象（只在 mount 时创建一次，之后复用）
+    this.terrainG = new PIXI.Graphics()
+    this.overlayG = new PIXI.Graphics()
+    this.zoneLabel = new PIXI.Text({
+      text: '',
+      style: { fontSize: 20, fill: 0x9ff0e8, fontWeight: '700', stroke: { color: 0x0f2a28, width: 4 } },
+    })
+    this.zoneLabel.anchor.set(0.5)
+    this.zoneLabel.visible = false
+    this.terrainLayer.addChild(this.terrainG)
+    this.overlayLayer.addChild(this.overlayG, this.zoneLabel)
+
+    // 注意：必须等所有常驻对象都建好之后再置 initialized ——
+    // 否则 setView 会在窗口期调用到 undefined，抛错会让 React 卸载整棵树（表现为玩家掉线）
+    this.initialized = true
+
     container.appendChild(this.canvas)
     this.attachPointerHandlers()
     if (typeof ResizeObserver !== 'undefined') {
@@ -143,7 +158,7 @@ export class BoardApp {
     this.fit(container)
   }
 
-  setTileHandler(handler: (x: number, y: number) => void): void {
+  setTileHandler(handler: ((x: number, y: number) => void) | null): void {
     this.tileHandler = handler
   }
 
@@ -186,6 +201,21 @@ export class BoardApp {
 
   getScale(): number {
     return this.scale
+  }
+
+  /** 相机状态（DEV/?debug=1：便于排查"点不中格子"这类问题） */
+  getCamera(): { scale: number; offsetX: number; offsetY: number; viewW: number; viewH: number; tileAtOrigin: { x: number; y: number } } {
+    const viewW = this.canvas?.getBoundingClientRect().width ?? 0
+    const viewH = this.canvas?.getBoundingClientRect().height ?? 0
+    return {
+      scale: this.scale,
+      offsetX: this.offsetX,
+      offsetY: this.offsetY,
+      viewW,
+      viewH,
+      // 画布左上角对应的格子坐标（负数表示棋盘左上方在画布之外）
+      tileAtOrigin: { x: -this.offsetX / this.scale / TILE, y: -this.offsetY / this.scale / TILE },
+    }
   }
 
   destroy(): void {
@@ -331,6 +361,23 @@ export class BoardApp {
     if (host) this.fit(host)
   }
 
+  /** 把镜头对准棋盘上的一个矩形区域（用于「定位我的部署区 / 我的部队」） */
+  focusTiles(x0: number, y0: number, x1: number, y1: number, padding = 1.5): void {
+    if (this.destroyed || !this.initialized) return
+    const cw = this.canvas?.getBoundingClientRect().width ?? this.app.renderer.width
+    const ch = this.canvas?.getBoundingClientRect().height ?? this.app.renderer.height
+    if (cw <= 0 || ch <= 0) return
+    const w = Math.max(1, x1 - x0 + 1 + padding * 2) * TILE
+    const h = Math.max(1, y1 - y0 + 1 + padding * 2) * TILE
+    const raw = Math.min(cw / w, ch / h)
+    this.scale = Math.max(MIN_SCALE, Math.min(this.maxScale, raw))
+    this.userInteracted = true
+    this.offsetX = cw / 2 - ((x0 + x1 + 1) / 2) * TILE * this.scale
+    this.offsetY = ch / 2 - ((y0 + y1 + 1) / 2) * TILE * this.scale
+    this.applyCamera()
+    this.render()
+  }
+
   /** 相机边界：棋盘始终至少有一部分留在视野内（避免手机上把棋盘拖丢） */
   private clampOffsets(): void {
     const { width, height } = this.boardSize()
@@ -434,47 +481,91 @@ export class BoardApp {
     canvas.style.cursor = 'grab'
   }
 
+  /** 渲染对象池：Pixi 的 Text/Graphics 必须复用，否则每次重绘都会泄漏纹理，最终把渲染器搞崩 */
+  private terrainG = null as unknown as import('pixi.js').Graphics
+  private overlayG = null as unknown as import('pixi.js').Graphics
+  private zoneLabel = null as unknown as import('pixi.js').Text
+  private captureTexts: import('pixi.js').Text[] = []
+  private floaterTexts: import('pixi.js').Text[] = []
+  private buildingViews = new Map<string, { box: import('pixi.js').Graphics; glyph: import('pixi.js').Text }>()
+  private unitViews = new Map<
+    string,
+    { body: import('pixi.js').Graphics; halo: import('pixi.js').Graphics; glyph: import('pixi.js').Text; bar: import('pixi.js').Graphics }
+  >()
+  private terrainKey = ''
+  private renderErrorLogged = false
+
+  /** 文本对象池：复用 Text，避免每次重绘都新建（Pixi 的 Text 会各自持有纹理） */
+  private textAt(pool: 'capture' | 'floater', index: number, style: Record<string, unknown>): import('pixi.js').Text {
+    const PIXI = this.pixi as typeof import('pixi.js')
+    const list = pool === 'capture' ? this.captureTexts : this.floaterTexts
+    let text = list[index]
+    if (!text) {
+      text = new PIXI.Text({ text: '', style: style as never })
+      text.anchor.set(0.5)
+      this.overlayLayer.addChild(text)
+      list[index] = text
+    }
+    text.visible = true
+    return text
+  }
+
   private render(): void {
     const view = this.view
     const PIXI = this.pixi
     if (!view || !PIXI) return
-
-    this.terrainLayer.removeChildren()
-    this.overlayLayer.removeChildren()
-    this.buildingLayer.removeChildren()
-    this.unitLayer.removeChildren()
-
+    if (!this.terrainG || !this.overlayG || !this.zoneLabel) return // 初始化未完成时的防御
     const { state } = view
     const map = getMap(state.mapId, this.data)
-    const reachable = new Set(view.reachable)
-    const targets = new Set(view.targets)
-    const zone = view.deployZoneIndex === null ? null : map.deployZones[view.deployZoneIndex]
     const now = Date.now()
 
-    // 地形
-    const terrain = new PIXI.Graphics()
-    for (let y = 0; y < map.height; y += 1) {
-      for (let x = 0; x < map.width; x += 1) {
-        const t = this.data.terrain[map.terrain[y * map.width + x]]
-        terrain.rect(x * TILE, y * TILE, TILE, TILE).fill(colorOf(t.color))
+    // ---------- 地形：静态，每张地图只画一次 ----------
+    if (this.terrainKey !== state.mapId) {
+      this.terrainKey = state.mapId
+      this.terrainG.clear()
+      for (let y = 0; y < map.height; y += 1) {
+        for (let x = 0; x < map.width; x += 1) {
+          const t = this.data.terrain[map.terrain[y * map.width + x]]
+          this.terrainG.rect(x * TILE, y * TILE, TILE, TILE).fill(colorOf(t.color))
+        }
       }
+      this.terrainG.rect(0, 0, map.width * TILE, map.height * TILE).stroke({ width: 2, color: 0x000000, alpha: 0.35 })
     }
-    terrain.rect(0, 0, map.width * TILE, map.height * TILE).stroke({ width: 2, color: 0x000000, alpha: 0.35 })
-    this.terrainLayer.addChild(terrain)
 
-    // 叠加层
-    const overlay = new PIXI.Graphics()
+    // ---------- 据点：集合是静态的，按 id 复用 ----------
+    for (const b of state.buildings) {
+      let v = this.buildingViews.get(b.id)
+      if (!v) {
+        const box = new PIXI.Graphics()
+        const glyph = new PIXI.Text({ text: '', style: { fontSize: 20, fill: 0xf5efe2, fontWeight: '700' } })
+        glyph.anchor.set(0.5)
+        this.buildingLayer.addChild(box, glyph)
+        v = { box, glyph }
+        this.buildingViews.set(b.id, v)
+      }
+      const type = this.data.buildings[b.type]
+      const index = b.owner === null ? -1 : state.players.indexOf(b.owner)
+      const fill = index < 0 ? NEUTRAL : OWNER_COLORS[index % OWNER_COLORS.length]
+      v.box.clear()
+      v.box.roundRect(b.x * TILE + 6, b.y * TILE + 6, TILE - 12, TILE - 12, 6).fill(fill).stroke({ width: 2, color: 0x14110f })
+      v.glyph.text = type.glyph
+      v.glyph.position.set(b.x * TILE + TILE / 2, b.y * TILE + TILE / 2 - 2)
+    }
+
+    // ---------- 覆盖层：一个常驻 Graphics，清空后重画 ----------
+    const overlay = this.overlayG
+    overlay.clear()
+    const zone = view.deployZoneIndex === null ? null : map.deployZones[view.deployZoneIndex]
     if (zone) {
       overlay
         .rect(zone.x0 * TILE, zone.y0 * TILE, (zone.x1 - zone.x0 + 1) * TILE, (zone.y1 - zone.y0 + 1) * TILE)
-        .fill({ color: 0x3fa7a0, alpha: 0.16 })
-        .stroke({ width: 2, color: 0x3fa7a0, alpha: 0.6 })
+        .fill({ color: 0x3fa7a0, alpha: 0.22 })
+        .stroke({ width: 4, color: 0x5fd8cf, alpha: 0.9 })
     }
-    for (const key of reachable) {
+    for (const key of view.reachable) {
       const [x, y] = key.split(',').map(Number)
       overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).fill({ color: 0x4f9fd4, alpha: 0.3 })
     }
-    // 攻击范围：红色空心边框（打不到的"太近"格用灰色）
     for (const key of view.attackRange ?? []) {
       const [x, y] = key.split(',').map(Number)
       overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).stroke({ width: 2, color: 0xd94f3d, alpha: 0.55 })
@@ -483,7 +574,7 @@ export class BoardApp {
       const [x, y] = key.split(',').map(Number)
       overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).stroke({ width: 1, color: 0x8a8175, alpha: 0.5 })
     }
-    for (const key of targets) {
+    for (const key of view.targets) {
       const [x, y] = key.split(',').map(Number)
       overlay.rect(x * TILE + 2, y * TILE + 2, TILE - 4, TILE - 4).fill({ color: 0xd94f3d, alpha: 0.35 })
     }
@@ -495,96 +586,119 @@ export class BoardApp {
     if (selectedBuilding) {
       overlay.rect(selectedBuilding.x * TILE + 1, selectedBuilding.y * TILE + 1, TILE - 2, TILE - 2).stroke({ width: 3, color: 0xf0d27a })
     }
-    const captureLabels: Array<{ x: number; y: number; text: string; color: number }> = []
     for (const b of state.buildings) {
       if (!b.capture) continue
       const ratio = Math.min(1, b.capture.points / this.data.capturePoints)
       const ownerIndex = Math.max(0, state.players.indexOf(b.capture.playerId))
-      const color = OWNER_COLORS[ownerIndex % OWNER_COLORS.length]
       overlay.rect(b.x * TILE + 4, b.y * TILE + TILE - 10, TILE - 8, 6).fill(0x14110f)
-      overlay.rect(b.x * TILE + 4, b.y * TILE + TILE - 10, (TILE - 8) * ratio, 6).fill({ color, alpha: 0.95 })
-      captureLabels.push({ x: b.x, y: b.y, text: b.capture.points + '/' + this.data.capturePoints, color })
-    }
-    this.overlayLayer.addChild(overlay)
-
-    // 占领进度文字（M7：文字 + 进度条双保险）
-    for (const item of captureLabels) {
-      const label = new PIXI.Text({
-        text: item.text,
-        style: { fontSize: 11, fill: item.color, fontWeight: '700', stroke: { color: 0x14110f, width: 3 } },
-      })
-      label.anchor.set(0.5)
-      label.position.set(item.x * TILE + TILE / 2, item.y * TILE + TILE - 16)
-      this.overlayLayer.addChild(label)
+      overlay
+        .rect(b.x * TILE + 4, b.y * TILE + TILE - 10, (TILE - 8) * ratio, 6)
+        .fill({ color: OWNER_COLORS[ownerIndex % OWNER_COLORS.length], alpha: 0.95 })
     }
 
-    // 据点
+    // ---------- 部署区标签（常驻，按需显示）----------
+    if (zone) {
+      this.zoneLabel.visible = true
+      this.zoneLabel.text = '你的部署区（点这里放置）'
+      this.zoneLabel.position.set(((zone.x0 + zone.x1 + 1) / 2) * TILE, (zone.y0 + 0.7) * TILE)
+    } else {
+      this.zoneLabel.visible = false
+    }
+
+    // ---------- 占领进度文字（复用池）----------
+    let captureIndex = 0
     for (const b of state.buildings) {
-      const type = this.data.buildings[b.type]
-      const index = b.owner === null ? -1 : state.players.indexOf(b.owner)
-      const fill = index < 0 ? NEUTRAL : OWNER_COLORS[index % OWNER_COLORS.length]
-      const g = new PIXI.Graphics()
-      g.roundRect(b.x * TILE + 6, b.y * TILE + 6, TILE - 12, TILE - 12, 6).fill(fill).stroke({ width: 2, color: 0x1a1512 })
-      this.buildingLayer.addChild(g)
-      const label = new PIXI.Text({
-        text: type.glyph,
-        style: { fontSize: 20, fill: 0xf5efe2, fontWeight: '700' },
+      if (!b.capture) continue
+      const ownerIndex = Math.max(0, state.players.indexOf(b.capture.playerId))
+      const label = this.textAt('capture', captureIndex, {
+        fontSize: 11,
+        fill: OWNER_COLORS[ownerIndex % OWNER_COLORS.length],
+        fontWeight: '700',
+        stroke: { color: 0x14110f, width: 3 },
       })
-      label.anchor.set(0.5)
-      label.position.set(b.x * TILE + TILE / 2, b.y * TILE + TILE / 2 - 2)
-      this.buildingLayer.addChild(label)
+      label.text = b.capture.points + '/' + this.data.capturePoints
+      label.position.set(b.x * TILE + TILE / 2, b.y * TILE + TILE - 16)
+      captureIndex += 1
     }
+    for (let i = captureIndex; i < this.captureTexts.length; i += 1) this.captureTexts[i].visible = false
 
-    // 单位（动画期间使用插值坐标）
+    // ---------- 单位：按 id 复用 ----------
+    const alive = new Set<string>()
     for (const unit of state.units) {
+      alive.add(unit.id)
+      let v = this.unitViews.get(unit.id)
+      if (!v) {
+        const halo = new PIXI.Graphics()
+        const body = new PIXI.Graphics()
+        const glyph = new PIXI.Text({ text: '', style: { fontSize: 17, fill: 0xffffff, fontWeight: '700' } })
+        glyph.anchor.set(0.5)
+        const bar = new PIXI.Graphics()
+        this.unitLayer.addChild(halo, body, glyph, bar)
+        v = { halo, body, glyph, bar }
+        this.unitViews.set(unit.id, v)
+      }
       const type = this.data.units[unit.type]
       const index = Math.max(0, state.players.indexOf(unit.owner))
       const color = OWNER_COLORS[index % OWNER_COLORS.length]
       const { x: cx, y: cy } = this.unitPixel(unit.id, unit.x, unit.y)
 
-      // 受击闪光
+      v.halo.clear()
       const flashExpiry = this.flashes.get(unit.id)
-      if (flashExpiry && flashExpiry > now) {
-        const halo = new PIXI.Graphics()
-        halo.circle(cx, cy - 2, TILE * 0.44).fill({ color: 0xff5a3c, alpha: 0.5 })
-        this.unitLayer.addChild(halo)
-      }
+      const flashing = !!flashExpiry && flashExpiry > now
+      if (flashing) v.halo.circle(cx, cy - 2, TILE * 0.44).fill({ color: 0xff5a3c, alpha: 0.5 })
+      v.halo.visible = flashing
 
-      const circle = new PIXI.Graphics()
-      circle.circle(cx, cy - 2, TILE * 0.34).fill(color).stroke({ width: 2, color: 0x14110f })
-      if (unit.acted) circle.circle(cx, cy - 2, TILE * 0.34).fill({ color: 0x000000, alpha: 0.35 })
-      this.unitLayer.addChild(circle)
+      v.body.clear()
+      v.body.circle(cx, cy - 2, TILE * 0.34).fill(color).stroke({ width: 2, color: 0x14110f })
+      if (unit.acted) v.body.circle(cx, cy - 2, TILE * 0.34).fill({ color: 0x000000, alpha: 0.35 })
 
-      const glyph = new PIXI.Text({
-        text: type.glyph,
-        style: { fontSize: 17, fill: 0xffffff, fontWeight: '700' },
-      })
-      glyph.anchor.set(0.5)
-      glyph.position.set(cx, cy - 3)
-      this.unitLayer.addChild(glyph)
+      v.glyph.text = type.glyph
+      v.glyph.position.set(cx, cy - 3)
 
-      const bar = new PIXI.Graphics()
       const ratio = Math.max(0, unit.hp) / type.hp
-      bar.rect(cx - 16, cy + 12, 32, 4).fill(0x14110f)
-      bar.rect(cx - 16, cy + 12, 32 * ratio, 4).fill(ratio > 0.5 ? 0x6fcf6a : ratio > 0.25 ? 0xd9a441 : 0xd94f3d)
-      this.unitLayer.addChild(bar)
+      v.bar.clear()
+      v.bar.rect(cx - 16, cy + 12, 32, 4).fill(0x14110f)
+      v.bar.rect(cx - 16, cy + 12, 32 * ratio, 4).fill(ratio > 0.5 ? 0x6fcf6a : ratio > 0.25 ? 0xd9a441 : 0xd94f3d)
+    }
+    for (const [id, v] of [...this.unitViews]) {
+      if (alive.has(id)) continue
+      // 必须先摘除再销毁：destroy() 不会自动从父容器移除，
+      // 留在显示列表里的"已销毁对象"会让 Pixi 的批处理器读到 null 而崩（_DefaultBatcher.break）
+      this.unitLayer.removeChild(v.halo, v.body, v.glyph, v.bar)
+      v.body.destroy()
+      v.halo.destroy()
+      v.glyph.destroy()
+      v.bar.destroy()
+      this.unitViews.delete(id)
     }
 
-    // 浮动数字（伤害 / 歼灭）：上升并淡出
+    // ---------- 浮动数字（复用池）----------
+    let floaterIndex = 0
     for (const floater of this.floaters) {
-      const age = (Date.now() - floater.startAt) / FLOATER_MS
+      const age = (now - floater.startAt) / FLOATER_MS
       if (age >= 1) continue
-      const text = new PIXI.Text({
-        text: floater.text,
-        style: { fontSize: 18, fill: floater.color, fontWeight: '700', stroke: { color: 0x14110f, width: 3 } },
+      const label = this.textAt('floater', floaterIndex, {
+        fontSize: 18,
+        fill: floater.color,
+        fontWeight: '700',
+        stroke: { color: 0x14110f, width: 3 },
       })
-      text.anchor.set(0.5)
-      text.position.set(floater.x * TILE + TILE / 2, floater.y * TILE + TILE / 2 - 14 - age * 26)
-      text.alpha = 1 - age * age
-      this.unitLayer.addChild(text)
+      label.text = floater.text
+      label.position.set(floater.x * TILE + TILE / 2, floater.y * TILE + TILE / 2 - 14 - age * 26)
+      label.alpha = 1 - age * age
+      floaterIndex += 1
     }
+    for (let i = floaterIndex; i < this.floaterTexts.length; i += 1) this.floaterTexts[i].visible = false
 
-    // autoStart: false → 手动提交这一帧
-    this.app.render()
+    try {
+      this.app.render()
+    } catch (err) {
+      // 渲染出错不能让整棵 React 树挂掉（否则玩家直接掉线）：
+      // 记一次日志，跳过这一帧，等下一次状态变化再重画
+      if (!this.renderErrorLogged) {
+        this.renderErrorLogged = true
+        console.error('[board] 渲染这一帧失败，已跳过：', err)
+      }
+    }
   }
 }

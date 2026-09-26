@@ -55,7 +55,7 @@ async function setupTwoPlayers(context: import('@playwright/test').BrowserContex
   const alice = await context.newPage()
   const bob = await context.newPage()
   for (const [tag, page] of [['alice', alice], ['bob', bob]] as const) {
-    page.on('pageerror', (e) => console.log('[' + tag + ' pageerror]', String(e.message).slice(0, 300)))
+    page.on('pageerror', (e) => console.log('[' + tag + ' pageerror]', String(e.stack ?? e.message).split('\n').slice(0, 6).join(' | ').slice(0, 500)))
     page.on('console', (m) => { if (m.type() === 'error') console.log('[' + tag + ' console]', m.text().slice(0, 300)) })
   }
   await alice.goto(localUrl('p-a', '甲将军'))
@@ -198,6 +198,43 @@ test.describe('对局（本地传输）', () => {
 
     await alice.getByTestId('back-to-lobby').click()
     await expect(alice.getByTestId('join-panel')).toBeVisible()
+  })
+
+  test('部署区外点击会说明方位并可一键定位（避免"地图点了没反应"）', async ({ context }) => {
+    const { alice } = await setupTwoPlayers(context)
+    await alice.getByTestId('deploy-sword').click()
+
+    // 点部署区之外（地图中部）→ 明确提示方位，且不产生单位
+    await clickTile(alice, 11, 6)
+    await expect(alice.getByTestId('game-hint')).toContainText('部署区')
+    await expect(alice.getByTestId('deploy-info')).toContainText('已放置 0/4')
+
+    // 一键定位后仍能看到提示，重新点区内即可部署
+    await alice.getByTestId('locate-button').click()
+    await expect(alice.getByTestId('game-hint')).toContainText('部署区')
+    await clickTile(alice, 11, 3)
+    await expect(alice.getByTestId('deploy-info')).toContainText('已放置 1/4')
+  })
+
+  test('重复部署/连续操作不会让棋盘崩溃（渲染对象池回归）', async ({ context }) => {
+    const { alice, bob } = await setupTwoPlayers(context)
+    await alice.getByTestId('deploy-sword').click()
+    for (const [x, y] of [[11, 2], [5, 3], [18, 3]] as const) {
+      await clickTile(alice, x, y)
+    }
+    await expect(alice.getByTestId('deploy-info')).toContainText('已放置 3/4')
+    await bob.getByTestId('deploy-sword').click()
+    await clickTile(bob, 11, 19)
+    await alice.getByTestId('deploy-done').click()
+    await bob.getByTestId('deploy-done').click()
+    await expect(alice.getByTestId('phase-label')).toHaveText('行动')
+    // 行动阶段继续点选/移动，棋盘仍然可用
+    await clickTile(alice, 11, 2)
+    await expect(alice.getByTestId('unit-panel')).toBeVisible()
+    await clickTile(alice, 11, 5)
+    await expect
+      .poll(async () => (await gameState(alice)).units.find((u) => u.owner === 'p-a')?.y)
+      .toBe(5)
   })
 
   test('生产：兵营出兵在下一回合出场', async ({ context }) => {

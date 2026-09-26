@@ -7,6 +7,7 @@ import type { RoomView } from '../net/roomSession'
 import type { RoomActions } from '../hooks/useRoom'
 import type { GameState, PlayerId } from '../game/types'
 import { BoardCanvas } from './BoardCanvas'
+import type { FocusRequest } from './BoardCanvas'
 import { ConnectStatusBadge } from './ConnectStatusBadge'
 import { ConnectionHelp } from './ConnectionHelp'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
@@ -39,9 +40,28 @@ export function GameScreen({ view, actions }: GameScreenProps) {
   const [hint, setHint] = useState<string | null>(null)
   const [tapState, setTapState] = useState<TapConfirmState>(EMPTY_TAP_STATE)
   const touch = useMemo(() => isTouchDevice(), [])
+  const [focus, setFocus] = useState<FocusRequest | null>(null)
+  const focusNonce = useRef(0)
+  const requestFocus = useCallback((x0: number, y0: number, x1: number, y1: number) => {
+    focusNonce.current += 1
+    setFocus({ x0, y0, x1, y1, nonce: focusNonce.current })
+  }, [])
 
   const myIndex = game.players.indexOf(view.selfId)
   const map = getMap(game.mapId)
+  const myZone: { x0: number; y0: number; x1: number; y1: number } | undefined =
+    myIndex >= 0 ? map.deployZones[myIndex] : undefined
+  const zoneDirection = myZone
+    ? myZone.y1 < map.height / 2
+      ? '地图上部'
+      : myZone.y0 > map.height / 2
+        ? '地图下部'
+        : myZone.x1 < map.width / 2
+          ? '地图左侧'
+          : myZone.x0 > map.width / 2
+            ? '地图右侧'
+            : '地图中部'
+    : '地图上'
   const currentPlayer = game.players[game.turnIndex]
   const isDeploy = game.phase === 'DEPLOY'
   const isOver = game.phase === 'GAME_OVER'
@@ -140,6 +160,31 @@ export function GameScreen({ view, actions }: GameScreenProps) {
 
   const frozen = view.pausedReason === 'host-offline'
 
+  // 进入部署阶段：自动把镜头对准己方部署区（避免"看不到自己的区域、点了却被告知不在部署区"）
+  useEffect(() => {
+    if (!isDeploy || !myZone) return
+    requestFocus(myZone.x0, myZone.y0, myZone.x1, myZone.y1)
+  }, [isDeploy, myZone, requestFocus])
+
+  /** 「定位」：部署阶段对准己方部署区；行动阶段对准自己的部队；都没有就显示全图 */
+  const locate = useCallback(() => {
+    if (isDeploy && myZone) {
+      requestFocus(myZone.x0, myZone.y0, myZone.x1, myZone.y1)
+      setHint('已把镜头对准你的部署区（' + zoneDirection + '）')
+      return
+    }
+    const mine = game.units.filter((u) => u.owner === view.selfId)
+    if (mine.length > 0) {
+      const xs = mine.map((u) => u.x)
+      const ys = mine.map((u) => u.y)
+      requestFocus(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys))
+      setHint('已把镜头对准你的部队')
+      return
+    }
+    requestFocus(0, 0, map.width - 1, map.height - 1)
+    setHint('已显示整张地图')
+  }, [game.units, isDeploy, map.height, map.width, myZone, requestFocus, view.selfId, zoneDirection])
+
   const onTileClick = useCallback(
     (x: number, y: number) => {
       if (isOver || frozen) return
@@ -149,11 +194,18 @@ export function GameScreen({ view, actions }: GameScreenProps) {
           setHint('先在右侧选择要部署的兵种')
           return
         }
-        playSound('click')
         if (myDeploy?.done) {
-          setHint('你已完成部署')
+          setHint('你已完成部署，等待对手确认')
           return
         }
+        const insideZone = !!myZone && x >= myZone.x0 && x <= myZone.x1 && y >= myZone.y0 && y <= myZone.y1
+        if (!insideZone) {
+          // 之前只回一句"不在部署区"，玩家根本不知道区在哪 —— 现在说明方位并把镜头带过去
+          setHint('只能放在高亮的部署区（你的区域在' + zoneDirection + '）—— 镜头已对准该区域')
+          if (myZone) requestFocus(myZone.x0, myZone.y0, myZone.x1, myZone.y1)
+          return
+        }
+        playSound('click')
         actions.sendCommand({ type: 'deploy', unitType: armedType, x, y })
         setHint(null)
         return
@@ -166,6 +218,14 @@ export function GameScreen({ view, actions }: GameScreenProps) {
 
       const unit = unitAt(game, x, y)
       const tile = x + ',' + y
+
+      // 0) 点到自己已行动过的单位：明确说原因（M7 修复：之前是静默无反应，像"地图坏了"）
+      if (unit && unit.owner === view.selfId && unit.acted) {
+        setSelectedUnitId(unit.id)
+        setSelectedBuildingId(null)
+        setHint(unitType(unit.type, DATA).name + ' 本回合已经行动过了（下回合可再行动）')
+        return
+      }
 
       // 1) 选中自己的单位
       if (unit && unit.owner === view.selfId && !unit.acted) {
@@ -245,6 +305,9 @@ export function GameScreen({ view, actions }: GameScreenProps) {
         <span className="hud-item">
           资金 <b data-testid="funds-label">{game.funds[view.selfId] ?? 0}</b>
         </span>
+        <button type="button" data-testid="locate-button" onClick={locate} title="把镜头对准我的部署区 / 部队">
+          🎯 定位
+        </button>
         <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
         <span className="hud-item muted small">房间 {view.roomCode}</span>
         <button type="button" data-testid="sound-toggle" onClick={toggleSound} title="音效开关">
@@ -282,6 +345,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
         <BoardCanvas
           view={boardView}
           onTileClick={onTileClick}
+          focus={focus}
           exposeDebug={import.meta.env.DEV || new URLSearchParams(window.location.search).has('debug')}
         />
 
