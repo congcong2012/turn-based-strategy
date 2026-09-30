@@ -4,7 +4,7 @@
 所有游戏逻辑跑在房主浏览器里，通过 WebRTC 直连同步，部署在 GitHub Pages 上。
 
 **线上地址**：https://congcong2012.github.io/turn-based-strategy/
-当前版本：**v1.0.0**（页脚会显示版本号 · 构建日期 · commit，变更记录见 CHANGELOG.md）
+当前版本：**v1.0.1**（页脚会显示版本号 · 构建日期 · commit，变更记录见 CHANGELOG.md）
 
 ---
 
@@ -97,6 +97,8 @@ TypeScript + React 19 + PixiJS 8（棋盘渲染，动态分包）+ Vite 8；
 1. 改 `package.json` 的 `version`，在 `CHANGELOG.md` 顶部加一条（含验收记录表）
 2. 按 **docs/release-checklist.md** 从头走一遍（静态检查 → 构建 → 4 条 E2E 轨道 → 子路径复现 → 13 项手测 → 跨网真人验收）
 3. `git tag -a vX.Y.Z && git push origin vX.Y.Z`，等 CI 绿，打开线上地址确认页脚版本号一致
+4. 跑线上自检：`node scripts/verify-live.mjs`（对已部署站点跑真实公网流程，含加密房、邀请链接、刷新重连），
+   把输出粘进 CHANGELOG 的「线上自检结果」
 
 ## 已知限制
 

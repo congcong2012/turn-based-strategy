@@ -206,15 +206,18 @@ export function useRoom(): UseRoomResult {
     void enqueueTeardown(session)
   }, [enqueueTeardown])
 
-  // 刷新页面后自动回到原房间（只在同一标签页会话内生效；离开房间会清除记录）
+  // 刷新页面后自动回到原房间（同一标签页会话内生效；点「离开房间」会清除记录）
   useEffect(() => {
     if (autoJoined.current) return
-    if (urlRoomCode !== null) return
     if (!storedRoomCode) return
+    // 链接里是**另一个**房间码 → 尊重链接意图（只预填，等用户点加入）；
+    // 链接里的房间就是刚才那个（用邀请链接进来的标签页刷新）→ 直接回到房间。
+    if (urlRoomCode !== null && urlRoomCode !== storedRoomCode) return
     autoJoined.current = true
-    // 带密码的房间：sessionStorage 里存了密码，刷新后照旧自动回到原房间
-    join(storedRoomCode, identity.nickname, storedRoomPassword ?? undefined)
-  }, [join, identity.nickname, storedRoomCode, storedRoomPassword, urlRoomCode])
+    // 带密码的房间：sessionStorage 里存了密码，刷新后照旧自动回到原房间；
+    // 链接里带了更新的密码则以链接为准。
+    join(storedRoomCode, identity.nickname, urlRoomKey ?? storedRoomPassword ?? undefined)
+  }, [join, identity.nickname, storedRoomCode, storedRoomPassword, urlRoomCode, urlRoomKey])
 
   const setReady = useCallback((ready: boolean) => sessionRef.current?.setReady(ready), [])
   const setNickname = useCallback((nickname: string) => sessionRef.current?.setNickname(nickname), [])

@@ -35,7 +35,7 @@ pnpm build          # 期望：0 error；记录主包与 Pixi 分包体积
 ## 3. 端到端回归（4 条轨道，全绿才算过）
 
 ```bash
-pnpm exec playwright test --project=local     # 27 passed（约 2.5 分钟，不需要公网）
+pnpm exec playwright test --project=local     # 28 passed（约 2.5 分钟，不需要公网）
 pnpm exec playwright test --project=mobile    # 2 passed（Pixel 5 视口 + 触摸）
 pnpm exec playwright test --project=preview   # 3 passed（dist 产物 + 子路径）
 pnpm exec playwright test --project=p2p       # 1 passed（真实 WebRTC + 公共信令，抖动可重试一次）
@@ -96,6 +96,15 @@ git push origin v1.0.0
 
 - [ ] GitHub Actions 的 deploy 工作流**绿**（`https://github.com/congcong2012/turn-based-strategy/actions`）
 - [ ] 线上地址打开后，页脚版本号与本次 tag 一致（版本号对不上 = 看的还是旧产物，强制刷新/清缓存）
+- [ ] **跑线上自检**（真实公网，含加密房与刷新重连，约 2 分钟）：
+
+  ```bash
+  node scripts/verify-live.mjs
+  # 期望：线上自检结果：15/15 通过，退出码 0
+  # 本地复现线上子路径：LIVE_URL=http://127.0.0.1:4180/turn-based-strategy/ node scripts/verify-live.mjs
+  ```
+
+- [ ] 把自检输出粘进 `CHANGELOG.md` 该版本的「线上自检结果」
 - [ ] 建议在 GitHub 上把该 tag 发布为 Release，正文直接用 CHANGELOG 对应小节
 
 ## 8. 失败处理

@@ -162,6 +162,20 @@ test.describe('房间密码', () => {
     await expect(bob.getByTestId('player-list')).toContainText('甲将军')
   })
 
+  test('用邀请链接进来的标签页，刷新后自动回到房间（不再需要重新点加入）', async ({ context }) => {
+    const page = await context.newPage()
+    // 模拟好友：从邀请链接进入（DEV 下额外带本地传输参数）
+    await page.goto('/?transport=local&as=r-i&nick=' + encodeURIComponent('乙将军') + '&room=' + ROOM + '&key=tea-2024')
+    await expect(page.getByTestId('room-code-input')).toHaveValue(ROOM)
+    await page.getByTestId('join-button').click()
+    await expect(page.getByTestId('room-code-display')).toHaveText(ROOM)
+
+    await page.reload()
+    // 链接里就是刚才那个房间 → 自动回去（并复用记住的密码）
+    await expect(page.getByTestId('room-code-display')).toHaveText(ROOM)
+    await expect(page.getByTestId('password-badge')).toHaveText('已加密')
+  })
+
   test('无密码房间：不显示加密徽章，邀请链接里没有 key', async ({ context }) => {
     const page = await context.newPage()
     await page.addInitScript(() => {

@@ -1,7 +1,7 @@
 {
   "name": "ancient-tactics",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "可联机回合制战略游戏（古代战棋）MVP",
   "scripts": {
