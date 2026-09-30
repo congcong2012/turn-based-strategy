@@ -74,6 +74,14 @@ try {
   await pageA.waitForSelector('[data-testid=rules-units]', { timeout: 10000 })
   const rulesText = await pageA.locator('[data-testid=rules-units]').innerText()
   check('规则速查表格有真实数据', rulesText.includes('刀盾兵') && rulesText.includes('投石车'))
+
+  // 规则速查 = 对局数值的同一份数据源：刀盾兵反步兵专精的数值必须原样出现
+  const swordRow = (
+    await pageA.locator('[data-testid=rules-matchup] tbody tr').first().locator('td').allInnerTexts()
+  )
+    .join(',')
+    .replace(/\s+/g, '')
+  check('规则速查里的刀盾兵克制数值与数据一致', swordRow === '55,75,80,45,12,70', swordRow)
   await pageA.getByRole('button', { name: '返回主页' }).click()
   await pageA.waitForSelector('[data-testid=entry-online]', { timeout: 10000 })
 

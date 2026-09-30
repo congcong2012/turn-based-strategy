@@ -102,8 +102,8 @@ git push origin v1.0.0
 
   ```bash
   node scripts/verify-live.mjs
-  # 期望：线上自检结果：全部 ✅（约 19–20 项，退出码 0）
-  # 说明：其中"错误密码的提示是否中文化"是条件断言，受网络时序影响可能被跳过，不影响结论
+  # 期望：线上自检结果：22/22 通过，退出码 0
+  # 说明：其中"错误密码的提示是否中文化"是条件断言，受网络时序影响偶尔会被跳过（跳过时总数少 1）
   # 本地复现线上子路径：LIVE_URL=http://127.0.0.1:4180/turn-based-strategy/ node scripts/verify-live.mjs
   ```
 
