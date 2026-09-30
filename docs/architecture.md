@@ -1,7 +1,7 @@
-# 架构文档（M1：联机大厅）
+# 架构文档（v1.0.0）
 
-> 状态：M1 已完成并通过验收 · 依赖 GDD：docs/gdd.md
-> 本文档描述**当前已实现的**架构，非目标架构。
+> 状态：M1–M7 与 v1.0.0 发版包均已完成并通过验收 · 依赖 GDD：docs/gdd.md
+> 本文档描述**当前已实现的**架构，非目标架构。发版流程见 docs/release-checklist.md。
 
 ## 1. 技术栈（实际版本）
 
@@ -201,12 +201,96 @@ M4 的经济修订正是这么做出来的：模拟显示旧配置在第 13 回�
 - 战报（`src/game/logText.ts`）是纯函数：房主与客户端各自把 `GameEvent` 翻译成中文，
   客户端通过 `game.events` 拿到同一条事件流。
 
+### ADR-17：房间密码 = Trystero 的密钥派生，而不是"应用层校验"（v1.0.0）
+
+需求是"给房间加一个可选密码"。三种做法：
+
+| 方案 | 做法 | 结论 |
+| --- | --- | --- |
+| A. 应用层校验 | 在 `hello` 里带密码，房主比对，不一致就踢 | ❌ 密码会明文进 P2P 信道；踢人前已经配对成功，还要额外写一套拒绝逻辑 |
+| B. 房间码拼密码 | 把密码混进 `roomId` | ❌ 密码会出现在公共信令的 topic 里，等于公开 |
+| **C. 交给 Trystero** | `joinRoom({ password })` | ✅ **采用** |
+
+Trystero 的 `password` 参与 SDP 密钥派生（`genKey`）**并且**参与握手校验
+（`createPasswordHandshake`）。因此密码是**连接层**的事：
+
+- 密码一致 → 正常配对，行为与无密码房间完全相同（协议、房主选举、对局逻辑零改动）；
+- 密码不一致 → 两端**根本配不上对**，页面上表现为一直"连接中 / 等待对手"，**不会报错**。
+
+最后一点是这套方案的唯一代价，也是唯一需要"设计"的地方：**静默失败必须被解释**。
+因此 UI 做了三件事：
+
+1. 房内显示「已加密」徽章 + 一行提示：「密码不一致会一直等待对手，不会有报错」；
+2. 「复制邀请链接」在加密房里自动带上 `&key=<密码>`，好友点开即自动填入（链接 = 钥匙，提示只发给好友）；
+3. 记住密码（`sessionStorage`）：刷新后自动重连必须复用同一个密码，否则会静默失联。
+
+密码只暴露布尔值（`RoomView.passwordEnabled`）给 UI，诊断面板写"已设房间密码"而不回显明文；
+手动直连（走带外 SDP）不参与密码机制，UI 会说明这一点。
+
+### ADR-18：主页、路由与版本号（v1.0.0）
+
+- **路由只用 query / hash**（`src/app/route.ts`，纯函数 `parseRoute`）：GitHub Pages 是纯静态托管，
+  没有服务端 rewrite，用 history 路由就必须额外搞 `404.html` 兜底。规则固定为：
+  带合法 `?room=` → 大厅（**老邀请链接不能失效**）→ `#/rules` / `?page=rules` → 规则页 → 其它 → 主页。
+  切页只写 hash，刷新与后退都停在原地。
+- **版本号在构建期注入**（`vite.config.ts` 的 `define`：`__APP_VERSION__` 取自 package.json，
+  `__BUILD_TIME__` 取构建时刻，`__GIT_SHA__` 取 CI 的 `GITHUB_SHA`）。
+  单一版本源 = `package.json`，页脚与诊断面板共用 `versionLine()`。
+  排查联机问题时，"你那边是什么版本"是第一个要问的问题，所以两个地方都显示。
+- **捐赠收款码是静态图片**（`public/donate-qrcode.png` + `import.meta.env.BASE_URL`）：
+  不引入任何第三方脚本/图片外链，符合"纯静态、零成本、不收集数据"的约束。
+
+### ADR-19：刷新重连的"静默分裂"——三个真实缺陷与修法（v1.0.0）
+
+发版前用真实网络（两个浏览器上下文 + 公共 MQTT）跑"刷新页面后重连"时，出现了一个
+**只有真实 P2P 才暴露、本地调试传输完全看不到**的故障：刷新后列表里只剩自己，并且自己显示"你是房主"，
+两边都以为自己是房主，互相忽略对方的名单快照，卡到再刷新为止。
+
+排查手法：给会话加**临时**诊断（按类型统计收发消息 + 每个会话实例的选举状态），
+在真实网络下打印，一次就跑出了完整时间线。三个缺陷层层叠加：
+
+**缺陷 1：离开的会话会"复活"。**
+`join()` 里 `await transportFactory(...)` 要几百毫秒（动态 import + 建连）。若这期间发生了
+`leave()`（React StrictMode 的"挂载→卸载→再挂载"、用户秒点离开），回调返回后传输才就绪，
+`activate()` 会把**已经离开的会话救活**：它继续跑 tick、继续自任房主、继续 `onChange` 覆盖界面。
+→ 加 `closed` 标志：`teardown()` 置位，`join()` 在 await 之后检查，若已作废就 `await created.leave()` 直接释放传输。
+
+**缺陷 2：StrictMode 下创建了两个会话。**
+自动加入是异步的（要 await 会话串行队列），而 StrictMode 的卸载发生在这个 await 之前，
+于是卸载时 `sessionRef.current` 还是 null —— 第一个会话既没被释放，又被第二个会话顶掉，
+成了"幽灵会话"：不在 `sessionRef` 里、没人释放它，却仍在跑。
+→ 两处修：卸载时**不复位** `autoJoined`（刷新会重新加载模块，本来就不需要）；`startSession` 加**世代守卫**，
+等待期间若已有更新的会话，就把自己 `dispose()` 掉（调用方的 `join()` 会因为 disposed 立刻返回）。
+再配合 `useRoom` 的清理路径 `leave()` 之后补一个 `dispose()`（硬止损）。
+
+**缺陷 3：继承了一个已建连的房间，谁都不再自我介绍。**
+新会话若直接复用了旧 room（Trystero 按 `(appId, roomId)` 缓存），两端都不会再触发 `onPeerJoin`，
+于是谁都不发 `hello`，双方各自等待 3 秒后**都自任房主**。
+→ `activate()` 对"加入前就已经连上的 peer"补一次定向 `hello`；`runTick` 的兜底从"没有 peer 才重发"
+扩展为"有 peer 但名单里除自己没有任何在线玩家也重发"（上限 8 次，不会刷屏）。
+
+**顺带修掉的裁决缺陷**：`hostHello` 现在携带发起方的 `joinedAt`。
+原来裁决"谁该当房主"要查 `records[otherId]`，而"对方的 hostHello 先于对方的 hello 到达"是常见情形，
+此时只能退回 playerId 字典序；一旦字典序有利于自己，就会**永久分裂**（双方都自认房主且不再重新裁决）。
+带上 joinedAt 后，无论消息先后都能算出同一结果。降级方在降级后会立刻重新自我介绍，
+以便拿到新房主的权威名单（否则会停在"等待对手"）。
+
+回归测试：`tests/unit/hostElection.test.ts`（hostHello 先到的裁决）、
+`tests/unit/roomSession.test.ts`（leave 期间完成的 join 不得复活、继承房间也能收敛为客户端）、
+`tests/e2e/p2p.spec.ts`（真实网络下刷新重连，修复后从"60 秒超时失败"变成 13 秒通过）。
+
 ## 2. 模块分层
 
 ```
 src/
-├─ main.tsx / App.tsx            入口与外壳
-├─ ui/                           Lobby / PlayerList / ManualSdpPanel（纯展示 + 事件回调）
+├─ main.tsx / App.tsx            入口与外壳（按路由选页：对局 > 规则 > 主页 > 大厅）
+├─ version.ts                    构建期注入的版本信息（页脚 / 诊断面板共用）
+├─ ui/                           纯展示 + 事件回调
+│  ├─ HomePage.tsx               主页（联机对战 / 单人练习-预留 / 规则速查）+ PVE 说明弹层
+│  ├─ RulesPanel.tsx             规则速查（全部由 src/data/*.json 渲染）
+│  ├─ AppFooter.tsx              页脚：版本号 + 规则入口 + 捐赠入口
+│  ├─ DonateDialog.tsx           捐赠弹层（静态收款码图片）
+│  └─ Lobby / PlayerList / ManualSdpPanel / GameScreen / BoardCanvas ...
 ├─ hooks/useRoom.ts              React 绑定：身份解析、会话创建、生命周期串行化
 ├─ game/                         纯规则内核（无 React / 无渲染 / 可纯单测）
 │  ├─ types.ts                   GameState / Unit / Command / ErrorCode / GameEvent
@@ -228,8 +312,9 @@ src/
 │  ├─ gameStore.ts               房主侧对局持久化（断线重连）
 │  └─ roomSession.ts             ★ 房间状态机：选举 + 权威名单 + 协议编排（无 React 依赖）
 └─ app/
+   ├─ route.ts                   极简路由（query/hash）→ 主页 / 大厅 / 规则页
    ├─ roomCode.ts                房间码归一化 / 校验 / 随机生成
-   ├─ identity.ts                playerId 与昵称持久化、URL 房间码、刷新后自动回到房间
+   ├─ identity.ts                playerId、昵称、URL 房间码与房间密码、本标签页房间记忆
    ├─ hostElection.ts            房主选举纯函数
    └─ lobbyReducer.ts            大厅名单归约纯函数
 ```
@@ -269,15 +354,19 @@ Pixi 内部在未初始化的 Application 上调私有方法直接抛错，React
 **修复**：`BoardApp` 记录 `initialized/destroyed`，`init()` 完成后若已 destroyed 就直接收尾；
 `destroy()` 在未初始化时不碰 `Application.destroy()`。
 
-## 4. 已知限制（M1）
+## 4. 已知限制（v1.0.0）
 
 | 限制 | 说明 | 计划 |
 | --- | --- | --- |
-| 依赖公共信令 | 好友局可用，公共中转抖动会延迟配对 | 备用 Torrent 策略 + M2 起考虑局域网/手动 SDP |
-| 仅 2 人 | 房间满员第 3 人被拒绝 | GDD 仍按 2–4 人设计，M2 起放开 |
-| LOBBY 阶段才允许房主接管 | 游戏内房主掉线只暂停 | 与 GDD 8.5 一致 |
-| 手动 SDP 面板仅为占位 | Trystero 不暴露 SDP 注入点 | 真实降级 = 策略切换 |
-| 信令策略切换会重新加入房间 | 会短暂离开房间 | 可接受 |
+| 依赖公共信令 | 好友局可用，公共中转抖动会延迟配对 | 备用 Torrent 策略 + 手动直连（M7 已实现） |
+| 房间上限 4 人 | 第 5 人会被拒绝（`roomFull`） | 按需放开，但四人图之外还要补地图 |
+| 游戏内不做主机迁移 | 房主掉线只暂停等待；接管只在 LOBBY 阶段允许 | 与 GDD 8.5 一致 |
+| 手动直连仅 2 人且需带外通信 | 无 TURN，双方都在对称 NAT 后可能连不上 | 家庭网络实测可用（跨运营商已验收） |
+| 房间密码不一致时**静默等待** | 连接层拒绝配对，页面上没有"密码错误"这种报错 | UI 已明确解释 + 邀请链接自动带密码 |
+| 手动直连不使用房间密码 | 该链路不经过信令 | UI 说明即可 |
+| 全量广播状态 | 4 人局状态仅几十 KB | 状态变大后再做增量补丁 |
+| 无观战 / 回放 | 数据已预留（种子 + 完整状态 + 指令流） | 见 docs/tasks.md 的 M8 待办 |
+| 单人练习（PVE）尚未实现 | 主页是**置灰占位**，点击给说明 | 纯前端 AI，不引入服务器 |
 
 ## 5. 成本与合规
 

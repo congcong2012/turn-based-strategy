@@ -92,20 +92,30 @@ export function seen(state: ElectionState, rec: PeerRecord): ElectionResult {
  * 规则 = 先加入者优先（joinedAt 更早），同一时刻再用 playerId 字典序兜底。
  * joinedAt 来自各自 hello 的复制值，因此两端算出的结果必然一致；
  * 时钟偏差只会选错赢家，不会造成两端不一致。
+ *
+ * 注意（v1.0.0 修的真实缺陷）：对方 joinedAt **优先取自 hostHello 消息本身**。
+ * 原来只查 `records[otherId]`，而"对方的 hostHello 先于对方的 hello 到达"是常见情形
+ * （刷新重连时尤其如此：新 peer 的 hostHello 立刻就到，hello 可能晚到几百毫秒），
+ * 此时会退回字典序 → 双方都自认房主，且**再也不会重新裁决**：
+ * 两边互相忽略对方的 lobby 快照，表现为"列表里只有自己"，卡死到刷新为止。
  */
-function shouldKeepHostship(state: ElectionState, otherId: string): boolean {
-  const mine = state.records[state.selfId]
-  const theirs = state.records[otherId]
-  if (!mine || !theirs) return state.selfId < otherId // 还没拿到对方 hello → 退回字典序
-  if (mine.joinedAt !== theirs.joinedAt) return mine.joinedAt < theirs.joinedAt
+function shouldKeepHostship(state: ElectionState, otherId: string, otherJoinedAt?: number | null): boolean {
+  const mine = state.joinedAt
+  const theirs = otherJoinedAt ?? state.records[otherId]?.joinedAt ?? null
+  if (theirs === null || theirs === undefined) return state.selfId < otherId // 对方没给时间戳 → 退回字典序
+  if (mine !== theirs) return mine < theirs
   return state.selfId < otherId
 }
 
-export function hostHello(state: ElectionState, hostId: string): ElectionResult {
+export function hostHello(
+  state: ElectionState,
+  hostId: string,
+  hostJoinedAt?: number | null,
+): ElectionResult {
   if (state.hostId === hostId) return { state, effects: [] }
 
   // 竞态：我已声明在先，且按"先到者优先"该我当房主 → 保持并重申，让对方降级
-  if (state.selfDeclared && shouldKeepHostship(state, hostId)) {
+  if (state.selfDeclared && shouldKeepHostship(state, hostId, hostJoinedAt)) {
     return { state, effects: [{ type: 'broadcastHostHello', hostId: state.selfId }] }
   }
 

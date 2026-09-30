@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
@@ -17,10 +18,19 @@ function resolveBase(): string {
   return raw
 }
 
+// 构建期注入版本信息（CI 里 GITHUB_SHA 由 runner 自动提供）
+const pkgVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version as string
+const gitSha = process.env.GITHUB_SHA ?? process.env.VITE_GIT_SHA ?? 'local'
+
 const base = resolveBase()
 
 export default defineConfig({
   base,
+  define: {
+    __APP_VERSION__: JSON.stringify(pkgVersion),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    __GIT_SHA__: JSON.stringify(gitSha),
+  },
   plugins: [react()],
   build: { outDir: 'dist', sourcemap: true, target: 'es2022' },
   // 固定绑定 127.0.0.1：Windows 上 localhost 会解析到 ::1，导致 Playwright 的探活失败

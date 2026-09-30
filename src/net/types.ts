@@ -43,7 +43,8 @@ export type Wire =
   | { t: 'cmd'; from: PlayerId; cmd: Command }
   | { t: 'cmdRejected'; from: PlayerId; code: ErrorCode }
   | { t: 'hello'; from: PlayerId; nickname: string; joinedAt: number }
-  | { t: 'hostHello'; from: PlayerId; hostId: PlayerId }
+  /** hostHello 带 joinedAt：接收方无需先收到对方的 hello 也能裁决竞态（见 ADR-3 / ADR-19） */
+  | { t: 'hostHello'; from: PlayerId; hostId: PlayerId; joinedAt: number }
   | { t: 'lobby'; from: PlayerId; lobby: LobbySnapshot }
   | { t: 'ready'; from: PlayerId; ready: boolean }
   | { t: 'nick'; from: PlayerId; nickname: string }
@@ -51,6 +52,7 @@ export type Wire =
   | { t: 'startHint'; from: PlayerId }
   | { t: 'bye'; from: PlayerId }
 
+/** 房间密码：Trystero 会用它派生信令密钥并做握手校验，密码不一致则根本配不上对 */
 export interface TransportHandlers {
   onMessage: (msg: Wire, peerId: PeerId) => void
   onPeerJoin: (peerId: PeerId) => void
@@ -67,4 +69,5 @@ export interface Transport {
   leave: () => Promise<void>
 }
 
-export type TransportFactory = (handlers: TransportHandlers) => Promise<Transport>
+/** 传输工厂：密码在 join 时才确定，因此作为第二个参数传入 */
+export type TransportFactory = (handlers: TransportHandlers, password?: string | null) => Promise<Transport>

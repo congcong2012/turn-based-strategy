@@ -73,13 +73,30 @@ export function writeStoredNickname(nickname: string, storage: StorageLike | nul
 }
 
 const LAST_ROOM_KEY = 'ancient-tactics.lastRoom'
+const LAST_ROOM_PASSWORD_KEY = 'ancient-tactics.lastRoomPassword'
 
-/** 记住本标签页当前所在房间（sessionStorage：刷新可恢复，新标签页互不影响） */
-export function writeLastRoom(roomCode: string): void {
+/**
+ * 记住本标签页当前所在房间（sessionStorage：刷新可恢复，新标签页互不影响）。
+ * 密码一并记住：房间密码参与 WebRTC 密钥派生，刷新后不带密码会自动重连失败。
+ */
+export function writeLastRoom(roomCode: string, password?: string | null): void {
   try {
     globalThis.sessionStorage?.setItem(LAST_ROOM_KEY, roomCode)
+    const clean = password?.trim()
+    if (clean) globalThis.sessionStorage?.setItem(LAST_ROOM_PASSWORD_KEY, clean)
+    else globalThis.sessionStorage?.removeItem(LAST_ROOM_PASSWORD_KEY)
   } catch {
     /* ignore */
+  }
+}
+
+/** 读取本标签页记住的房间密码（没有则 null） */
+export function readLastRoomPassword(): string | null {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(LAST_ROOM_PASSWORD_KEY) ?? null
+    return raw && raw.trim().length > 0 ? raw : null
+  } catch {
+    return null
   }
 }
 
@@ -97,6 +114,7 @@ export function readLastRoom(): string | null {
 export function clearLastRoom(): void {
   try {
     globalThis.sessionStorage?.removeItem(LAST_ROOM_KEY)
+    globalThis.sessionStorage?.removeItem(LAST_ROOM_PASSWORD_KEY)
   } catch {
     /* ignore */
   }
@@ -109,6 +127,15 @@ export function roomCodeFromUrl(search: string): string | null {
   if (!raw) return null
   const code = normalizeRoomCode(raw)
   return code.length > 0 ? code : null
+}
+
+/** 从 URL 读取房间密码（?key=xxx）：邀请链接可带上，好友点开即自动填入 */
+export function roomPasswordFromUrl(search: string): string | null {
+  const params = new URLSearchParams(search)
+  const raw = params.get('key')
+  if (!raw) return null
+  const clean = raw.trim().slice(0, 64)
+  return clean.length > 0 ? clean : null
 }
 
 export interface ResolveIdentityOptions {

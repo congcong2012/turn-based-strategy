@@ -2,8 +2,17 @@
 
 import type { PeerId, Transport, TransportFactory, TransportHandlers, Wire } from '../../../src/net/types'
 
+export interface MemoryHubOptions {
+  /**
+   * 静默加入：新传输**不**触发任何 onPeerJoin（双向）。
+   * 用来复现"会话继承了一个已建连的房间"：刷新页面时新会话可能直接复用旧 room，
+   * 两端都不会再收到 peerJoin 事件。
+   */
+  silent?: boolean
+}
+
 export interface MemoryHub {
-  createFactory: () => TransportFactory
+  createFactory: (options?: MemoryHubOptions) => TransportFactory
   peerIds: () => PeerId[]
   disconnect: (peerId: PeerId) => void
   pause: () => void
@@ -21,15 +30,17 @@ export function createMemoryHub(): MemoryHub {
     else fn()
   }
 
-  const createFactory = (): TransportFactory => {
+  const createFactory = (options: MemoryHubOptions = {}): TransportFactory => {
     return async (handlers: TransportHandlers): Promise<Transport> => {
       counter += 1
       const selfId: PeerId = 'peer-' + counter
       let left = false
       live.set(selfId, handlers)
 
-      const others = [...live.keys()].filter((id) => id !== selfId)
-      for (const id of others) deliver(() => live.get(id)?.onPeerJoin(selfId))
+      if (!options.silent) {
+        const others = [...live.keys()].filter((id) => id !== selfId)
+        for (const id of others) deliver(() => live.get(id)?.onPeerJoin(selfId))
+      }
 
       return {
         selfId,

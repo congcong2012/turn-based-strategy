@@ -19,6 +19,12 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
 
     await page.goto('/')
     await expect(page.getByRole('heading', { name: /古代战棋/ })).toBeVisible()
+    // 生产构建默认落在主页：三个入口 + 页脚版本号
+    await expect(page.getByTestId('entry-online')).toBeVisible()
+    await expect(page.getByTestId('entry-pve')).toBeVisible()
+    await expect(page.getByTestId('entry-rules')).toBeVisible()
+    await expect(page.getByTestId('version-line')).toContainText('v')
+    await page.getByTestId('entry-online').click()
     await expect(page.getByTestId('join-panel')).toBeVisible()
 
     // 相对 base：静态资源路径以 ./ 开头，任意 GitHub Pages 子路径都能加载
@@ -31,14 +37,14 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
 
   test('生产构建可以真的加入房间并成为房主', async ({ page }) => {
     const room = randomRoom()
-    await page.goto('/')
+    await page.goto('/?page=lobby')
     await joinRoom(page, room, '生产将军')
     await waitForHost(page)
     await expect(page.getByTestId('player-item')).toHaveCount(1)
   })
 
   test('生产构建不暴露 DEV 调试入口（?as= / ?transport=local 无效）', async ({ page }) => {
-    await page.goto('/?transport=local&as=hacker')
+    await page.goto('/?transport=local&as=hacker&page=lobby')
     await expect(page.getByTestId('transport-label')).toHaveCount(0)
     const room = randomRoom()
     await joinRoom(page, room, '生产将军')

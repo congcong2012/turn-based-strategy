@@ -9,6 +9,8 @@ export interface CreateTransportOptions {
   strategy: SignalStrategy
   roomCode: string
   handlers: TransportHandlers
+  /** 可选房间密码（手动直连不使用密码：它不经过信令） */
+  password?: string
 }
 
 export async function createTransport(options: CreateTransportOptions): Promise<Transport> {
@@ -22,6 +24,7 @@ export async function createTransport(options: CreateTransportOptions): Promise<
     roomCode: options.roomCode,
     strategy: options.strategy,
     handlers: options.handlers,
+    password: options.password,
   })
 }
 
@@ -31,5 +34,6 @@ export function transportFactoryFor(
   strategy: SignalStrategy,
   roomCode: string,
 ): TransportFactory {
-  return (handlers: TransportHandlers) => createTransport({ kind, strategy, roomCode, handlers })
+  return (handlers: TransportHandlers, password?: string | null) =>
+    createTransport({ kind, strategy, roomCode, handlers, password: password ?? undefined })
 }

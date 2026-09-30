@@ -5,6 +5,8 @@ import type { Identity } from '../app/identity'
 import type { RoomView } from '../net/roomSession'
 import type { SignalStrategy, TransportKind } from '../net/types'
 import type { RoomActions } from '../hooks/useRoom'
+import type { Page } from '../app/route'
+import { AppFooter } from './AppFooter'
 import { ConnectStatusBadge } from './ConnectStatusBadge'
 import { ConnectionHelp } from './ConnectionHelp'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
@@ -15,8 +17,11 @@ export interface LobbyProps {
   view: RoomView
   identity: Identity
   initialRoomCode: string | null
+  /** 邀请链接里带的房间密码（?key=），用于预填 */
+  initialRoomKey: string | null
   debug: { canUseLocal: boolean; kind: TransportKind; strategy: SignalStrategy }
   actions: RoomActions
+  onNavigate: (page: Page) => void
 }
 
 const STATUS_TEXT: Record<string, string> = {
@@ -34,9 +39,19 @@ const ROLE_TEXT: Record<string, string> = {
   client: '你是玩家',
 }
 
-export function Lobby({ view, identity, initialRoomCode, debug, actions }: LobbyProps) {
+export function Lobby({
+  view,
+  identity,
+  initialRoomCode,
+  initialRoomKey,
+  debug,
+  actions,
+  onNavigate,
+}: LobbyProps) {
   const [nickname, setNickname] = useState(identity.nickname)
   const [code, setCode] = useState(initialRoomCode ?? '')
+  const [password, setPassword] = useState(initialRoomKey ?? '')
+  const [showPassword, setShowPassword] = useState(false)
   const [rename, setRename] = useState(view.nickname)
   const [copied, setCopied] = useState(false)
   const [mode, setMode] = useState<'p2p' | 'manual'>('p2p')
@@ -47,10 +62,16 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
     setRename(view.nickname)
   }, [view.nickname])
 
+  // 邀请链接：房间码 + （若是加密房）房间密码。链接等于钥匙，只发给好友。
+  const inviteKey = view.passwordEnabled ? password.trim() : ''
   const inviteUrl =
     typeof window === 'undefined' || !view.roomCode
       ? ''
-      : window.location.origin + window.location.pathname + '?room=' + view.roomCode
+      : window.location.origin +
+        window.location.pathname +
+        '?room=' +
+        view.roomCode +
+        (inviteKey ? '&key=' + encodeURIComponent(inviteKey) : '')
 
   const copyInvite = () => {
     if (!inviteUrl) return
@@ -132,6 +153,32 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
             </div>
           </label>
 
+          <label className="field">
+            <span>房间密码（可选，房主设了就必填）</span>
+            <div className="row">
+              <input
+                data-testid="room-password-input"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                maxLength={64}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="没有密码就留空"
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                type="button"
+                data-testid="toggle-password"
+                onClick={() => setShowPassword((prev) => !prev)}
+              >
+                {showPassword ? '隐藏' : '显示'}
+              </button>
+            </div>
+          </label>
+          <p className="muted small">
+            密码只在你们的设备之间用于连接校验，不会发到任何服务器。密码不同的两个人会互相看不见（不会报错，所以两边务必一致）。
+          </p>
+
           <div className="row mode-row">
             <button
               type="button"
@@ -158,7 +205,7 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
                 className="primary"
                 data-testid="join-button"
                 disabled={!isValidRoomCode(code) || view.status === 'connecting'}
-                onClick={() => actions.join(code, nickname)}
+                onClick={() => actions.join(code, nickname, password.trim() || undefined)}
               >
                 加入房间
               </button>
@@ -206,11 +253,18 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
               <button type="button" data-testid="copy-link-button" onClick={copyInvite}>
                 {copied ? '已复制链接' : '复制邀请链接'}
               </button>
+              {view.passwordEnabled ? <span className="tag tag-host" data-testid="password-badge">已加密</span> : null}
               <button type="button" className="danger" data-testid="leave-button" onClick={() => actions.leave()}>
                 离开房间
               </button>
             </div>
           </div>
+
+          {view.passwordEnabled ? (
+            <p className="muted small" data-testid="password-hint">
+              房间已设密码：邀请链接里已带上密码，请只发给好友。对方若手动输密码，必须与这里完全一致（大小写敏感）；密码不一致会一直「连接中 / 等待对手」，不会有报错。
+            </p>
+          ) : null}
 
           <h2>玩家列表（{view.players.length}）</h2>
           <PlayerList players={view.players} selfId={view.selfId} />
@@ -322,9 +376,7 @@ export function Lobby({ view, identity, initialRoomCode, debug, actions }: Lobby
 
       <DiagnosticsPanel view={view} />
 
-      <footer className="app-footer muted small">
-        纯静态托管 · 无后端 / 无数据库 · 房主权威 · 客户端只发指令
-      </footer>
+      <AppFooter onNavigate={onNavigate} />
     </div>
   )
 }

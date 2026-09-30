@@ -3,6 +3,7 @@ import { createRoomSession } from '../../src/net/roomSession'
 import type { RoomSession, RoomView } from '../../src/net/roomSession'
 import { createMemoryHub } from './support/memoryHub'
 import type { MemoryHub } from './support/memoryHub'
+import type { Transport, TransportFactory, TransportHandlers } from '../../src/net/types'
 
 const ROOM = 'AB23CD'
 
@@ -11,14 +12,19 @@ interface Peer {
   view: RoomView
 }
 
-function makePeer(hub: MemoryHub, playerId: string, nickname: string): Peer {
+function makePeer(
+  hub: MemoryHub,
+  playerId: string,
+  nickname: string,
+  transportFactory?: TransportFactory,
+): Peer {
   const peer: Peer = { session: null as unknown as RoomSession, view: null as unknown as RoomView }
   peer.session = createRoomSession({
     playerId,
     nickname,
     strategy: 'mqtt',
     kind: 'local',
-    transportFactory: hub.createFactory(),
+    transportFactory: transportFactory ?? hub.createFactory(),
     onChange: (view) => {
       peer.view = view
     },
@@ -208,6 +214,58 @@ describe('房间会话（双端内存传输）', () => {
     expect(eve.view.roomCode).toBeNull()
     expect(eve.view.notice).toContain('房间已满')
     expect(alice.view.players).toHaveLength(4)
+  })
+
+  it('缺陷回归：join() 还在等传输时就被 leave()，会话不得复活（StrictMode 双挂载）', async () => {
+    // 传输工厂先卡住：模拟 join 期间发生"卸载"（React StrictMode / 用户秒点离开）
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const base = hub.createFactory()
+    const slowFactory: TransportFactory = async (handlers: TransportHandlers): Promise<Transport> => {
+      await gate
+      return base(handlers)
+    }
+
+    const alice = makePeer(hub, 'alice', '甲')
+    await alice.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(3200)
+    expect(alice.view.role).toBe('host')
+
+    const bob = makePeer(hub, 'bob', '乙', slowFactory)
+    const joining = bob.session.join(ROOM)
+    await bob.session.leave() // 挂载即卸载
+    await flush()
+    release() // 传输这时才就绪
+
+    await joining
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    // 旧会话必须彻底作废：不自任房主、不再进房、不再打扰房主
+    expect(bob.session.getView().role).toBe('idle')
+    expect(bob.view.role).toBe('idle')
+    expect(hub.peerIds()).toHaveLength(1) // 传输已被释放
+    expect(alice.view.players).toHaveLength(1)
+  })
+
+  it('缺陷回归：新会话"继承"了已建连的房间（没有 peerJoin）也能收敛为客户端', async () => {
+    const alice = makePeer(hub, 'alice', '甲')
+    await alice.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(3200)
+    expect(alice.view.role).toBe('host')
+
+    // bob 刷新：新会话与 alice 之间连接已存在，但双方都不会再收到 peerJoin
+    const bob = makePeer(hub, 'bob', '乙', hub.createFactory({ silent: true }))
+    await bob.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(8000)
+
+    // 靠"有 peer 但名单里没有别人 → 重发 hello"的兜底收敛
+    expect(bob.view.role).toBe('client')
+    expect(bob.view.hostNickname).toBe('甲')
+    expect(bob.view.players.map((p) => p.playerId)).toEqual(['alice', 'bob'])
+    expect(alice.view.players).toHaveLength(2)
+    expect(alice.view.isHost).toBe(true)
   })
 
   it('非法房间码被拒绝且不建立连接', async () => {

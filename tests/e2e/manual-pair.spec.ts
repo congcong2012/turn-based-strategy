@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test'
 import { ROOM } from './helpers'
 
 async function openJoinPanel(page: Page, nickname: string) {
-  await page.goto('/?debug=1')
+  await page.goto('/?debug=1&page=lobby')
   await page.getByTestId('nickname-input').fill(nickname)
   await page.getByTestId('room-code-input').fill(ROOM)
   await page.getByTestId('mode-manual').click()

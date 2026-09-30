@@ -9,7 +9,7 @@ import type { BrowserContext } from '@playwright/test'
 
 async function newPlayer(context: BrowserContext, nickname: string, room: string) {
   const page = await context.newPage()
-  await page.goto('/')
+  await page.goto('/?page=lobby')
   await joinRoom(page, room, nickname)
   return page
 }

@@ -46,14 +46,17 @@ export interface TrysteroTransportOptions {
   roomCode: string
   strategy: SignalStrategy
   handlers: TransportHandlers
+  /** 可选房间密码：参与 SDP 密钥派生与握手校验 */
+  password?: string
 }
 
 export async function createTrysteroTransport(options: TrysteroTransportOptions): Promise<Transport> {
-  const { roomCode, strategy, handlers } = options
+  const { roomCode, strategy, handlers, password } = options
   const mod = await loadStrategy(strategy)
 
   const urls = relayUrlsFor(strategy)
   const config: JoinRoomConfig = { appId: APP_ID }
+  if (password) config.password = password
   if (urls.length > 0) {
     config.relayConfig = { urls, redundancy: urls.length }
   }
@@ -110,7 +113,8 @@ export async function createTrysteroTransport(options: TrysteroTransportOptions)
 
   // DEV 调试钩子：可在控制台/自动化里检查信令与 peer 连接状态
   if (import.meta.env.DEV) {
-    ;(globalThis as Record<string, unknown>).__atTrystero = {
+    const g = globalThis as Record<string, unknown>
+    g.__atTrystero = {
       room,
       selfId: mod.selfId,
       roomCode,

@@ -169,6 +169,47 @@
 | E2E | ✅ 24 passed（新增：手动直连真实 WebRTC 配对、连接状态指示 2 条、移动端双击确认） |
 | 家庭网络稳定性 | ✅ 真实 P2P 用例 + 连续刷新重连用例通过；失败路径有提示与两条备用方案 |
 
+## M9 · v1.0.0 发版包 ✅
+
+> 前置：真人验收已完成（跨网络、跨运营商）。
+> 发布清单固化为 docs/release-checklist.md，**每次发版照做**；变更记录见 CHANGELOG.md。
+
+交付物
+- [x] **房间密码（可选）**：`joinRoom({ password })` 参与 SDP 密钥派生与握手校验；
+      邀请链接自动带 `&key=`；刷新后记住密码（sessionStorage）；大厅显示「已加密」徽章与"密码不一致会静默等待"的提示
+- [x] **主页**（`src/ui/HomePage.tsx`）：联机对战 / 单人练习-预留 / 规则速查三入口 + 三步开局说明；
+      邀请链接（`?room=`）仍然直达大厅
+- [x] **PVE 占位**：按钮标注「开发中」，点击弹出说明弹层（纯前端 AI 计划，不引入服务器）
+- [x] **规则速查页**（`src/ui/RulesPanel.tsx`）：兵种 / 克制矩阵 / 地形 / 据点经济 / 胜负 / 操作，全部由 `src/data/*.json` 渲染
+- [x] **捐赠入口**：页脚「❤ 请我喝杯茶」→ 弹层显示 `public/donate-qrcode.png`（静态图片，零第三方脚本）
+- [x] **版本号**：构建期注入（`__APP_VERSION__` / `__BUILD_TIME__` / `__GIT_SHA__`），页脚与诊断面板都显示
+- [x] **变更日志**：`CHANGELOG.md`（Keep a Changelog 结构，含每个版本的验收记录）
+- [x] **发版回归清单**：`docs/release-checklist.md`（8 步：静态检查 → 构建 → 4 条 E2E 轨道 → 子路径复现 → 13 项手测 → 真人跨网验收 → 打标签部署 → 失败处理）
+- [x] 极简路由 `src/app/route.ts`（`?page=` / `#/lobby` / `#/rules`；无参数 = 主页）
+
+过程中修掉的问题
+1. 默认落地页改成主页后，**所有 E2E 都少了"进大厅"这一步** → 统一在 `localUrl()` 里带 `&page=lobby`，
+   并新增 `openLobby()` 走真实的"主页 → 点联机对战"路径。
+2. 切换信令策略重新加入房间时**会丢掉房间密码**（`setStrategy` 只带了房间码）→ 用 `passwordRef` 复用；
+   刷新自动重连同理，改从 sessionStorage 恢复密码。
+3. **刷新重连的"静默分裂"**（真实 P2P 才暴露，本地传输看不到）：刷新后列表只剩自己、而且自己显示"你是房主"，
+   两边都以为自己是房主、互相忽略名单快照。排查见 ADR-19，共三个叠加缺陷：
+   - 离开的会话会"复活"（`leave()` 期间 `join()` 才拿到传输）→ 加 `closed` 标志 + 作废时释放传输；
+   - StrictMode 双挂载创建了两个会话，第一个成了没人释放的"幽灵会话" → 卸载不复位 `autoJoined` + `startSession` 世代守卫 + 清理路径补 `dispose()`；
+   - 继承已建连的房间时双方都不再自我介绍 → 启动时对已有 peer 补定向 `hello`，名单为空时周期重发（上限 8 次）。
+   - 顺带：`hostHello` 现在带 `joinedAt`（否则"对方 hostHello 先于 hello 到达"时会退回字典序并永久分裂），
+     降级方会立刻重新自我介绍以拿回权威名单。
+   修复效果：`p2p.spec.ts` 的刷新重连由"60 秒超时失败"变为 **12.7 秒通过**。
+
+验收
+| 项 | 结果 |
+| --- | --- |
+| 单元测试 | ✅ 124 passed（新增：路由 7、版本 2、房间密码记忆 2、`?key=` 解析 1、刷新重连缺陷回归 3） |
+| E2E（本地传输） | ✅ 27 passed（新增 release.spec.ts 7 条：主页/规则/捐赠二维码真实加载/版本号/手机布局/加密房邀请链接/无密码房） |
+| E2E（其它轨道） | ✅ mobile 2 / preview 3 / p2p 1 / manual 1 |
+| 真人验收 | ✅ 跨网络、跨运营商：同房间码互相可见、开局、刷新重连、房主刷新恢复整局 |
+| 线上 | ✅ 已发布 v1.0.0（页脚版本号与 tag 一致） |
+
 ## M8 · 待办（按价值排序）
 
 - [ ] 观战/回放（数据已预留：种子 + 完整状态 + 指令流）
@@ -181,16 +222,18 @@
 ```bash
 pnpm install          # 安装依赖
 pnpm dev              # 本地开发（http://127.0.0.1:5173）
-pnpm test             # 单元测试（33 个）
+pnpm test             # 单元测试（124 个）
 pnpm build            # 类型检查 + 生产构建（dist/）
 pnpm preview          # 预览生产构建（http://127.0.0.1:4173）
-pnpm e2e:local        # 本地传输 E2E（无需网络）
+pnpm e2e:local        # 本地传输 E2E（26 个，无需网络，约 2.5 分钟）
 pnpm e2e:p2p          # 真实 P2P E2E（需要公网信令）
-pnpm e2e              # 全部 E2E（含生产构建验收）
+pnpm e2e              # 全部 E2E（34 个：local 27 / mobile 2 / preview 3 / p2p 1 / manual 1）
 ```
 
 > 首次运行 E2E 需要 `pnpm exec playwright install chromium`（约 170MB）。
 > CI 只跑单元测试 + 构建；E2E 作为本地质量门（真实 P2P 依赖公共信令，不适合放进部署流水线）。
+>
+> **发版前必须按 docs/release-checklist.md 全量走一遍**，并把结果记进 CHANGELOG.md。
 
 ## GitHub Pages 部署清单
 

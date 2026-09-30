@@ -101,6 +101,28 @@ describe('房主选举', () => {
     expect(types(stepDown.effects)).toEqual(['steppedDown'])
   })
 
+  it('缺陷回归：对方的 hostHello 先于对方的 hello 到达，也能按 joinedAt 正确降级', () => {
+    // 甲先加入（joinedAt=1000），乙刷新后重新加入（joinedAt=2000）并误自任房主；
+    // 乙此时**还没有**甲的 hello 记录（真实网络下 hostHello 可能先到）。
+    // 靠 hostHello 自带的 joinedAt 才能裁决；否则会退回字典序，
+    // 一旦字典序对乙有利，双方就永久互相认为自己是房主（实测踩到过）。
+    const bobId = '5AAA' // 字典序小于下面甲方的 id，旧的字典序兜底会误判
+    const aliceId = 'TZZZ'
+    const bob: ElectionState = { ...createElection(bobId, '乙', 2000), hostId: bobId, selfDeclared: true }
+    expect(Object.keys(bob.records)).toEqual([bobId])
+
+    const result = hostHello(bob, aliceId, 1000)
+    expect(result.state.hostId).toBe(aliceId)
+    expect(result.state.selfDeclared).toBe(false)
+    expect(types(result.effects)).toEqual(['steppedDown'])
+
+    // 反向：自己更早加入 → 保持房主并重申
+    const early: ElectionState = { ...createElection(aliceId, '甲', 1000), hostId: aliceId, selfDeclared: true }
+    const keep = hostHello(early, bobId, 2000)
+    expect(keep.state.hostId).toBe(aliceId)
+    expect(types(keep.effects)).toEqual(['broadcastHostHello'])
+  })
+
   it('joinedAt 相同 → 退回 playerId 字典序', () => {
     let a = createElection('p2', '乙', 100)
     a = seen(a, rec('p1', 100)).state

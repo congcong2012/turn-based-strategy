@@ -170,6 +170,7 @@ button.block { width: 100%; margin-bottom: 8px; }
 .overlay {
   position: fixed; inset: 0; background: rgba(10, 8, 7, 0.78);
   display: flex; align-items: center; justify-content: center; z-index: 10;
+  padding: 16px; overflow: auto;
 }
 .overlay-card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
@@ -220,3 +221,50 @@ button.block { width: 100%; margin-bottom: 8px; }
 }
 .diag-panel button { font-size: 12px; }
 .manual-panel textarea { font-family: monospace; font-size: 11px; }
+
+/* ===== 主页 / 规则页 / 页脚 / 捐赠（v1.0.0） ===== */
+.home-page { max-width: 760px; }
+.home-header h1 { font-size: 30px; letter-spacing: 3px; }
+.home-header p { margin: 6px 0 0; }
+
+.home-entries { display: flex; flex-direction: column; gap: 12px; }
+.entry-card {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  grid-template-rows: auto auto;
+  gap: 2px 12px;
+  align-items: center;
+  text-align: left;
+  white-space: normal;
+  padding: 14px 16px;
+  background: var(--panel-2);
+}
+.entry-card:hover:not(:disabled) { border-color: var(--gold); }
+.entry-card.primary { background: #2a1f1a; border-color: #4a3229; }
+.entry-icon { grid-row: 1 / 3; font-size: 28px; text-align: center; }
+.entry-title { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.entry-desc { font-size: 12px; color: var(--muted); }
+
+.rules-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.6; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.rules-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.rules-table th, .rules-table td { border: 1px solid var(--line); padding: 6px 8px; text-align: center; }
+.rules-table thead th { background: var(--panel-2); color: var(--gold); font-weight: 600; }
+.rules-table tbody th { background: var(--panel-2); text-align: left; }
+.rules-table .cell-strong { color: var(--gold); font-weight: 700; }
+
+.link-button {
+  background: none; border: none; padding: 2px 0; font-size: 12px;
+  color: var(--cyan); text-decoration: underline; cursor: pointer;
+}
+.app-footer { display: flex; flex-direction: column; gap: 8px; align-items: center; padding-top: 10px; }
+.footer-row { justify-content: center; gap: 14px; }
+
+.donate-button { font-size: 13px; padding: 7px 14px; border-color: #5a3a31; color: #f0c9b6; }
+.donate-button:hover { border-color: var(--red); }
+.donate-card { max-width: 340px; }
+.donate-qr {
+  display: block; width: 100%; max-width: 280px; margin: 12px auto;
+  border-radius: 10px; background: #fff;
+}
+

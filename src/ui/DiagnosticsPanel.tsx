@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { RoomView } from '../net/roomSession'
 import { connectionLabel } from '../net/connectionState'
+import { versionLine } from '../version'
 
 export interface DiagnosticsPanelProps {
   view: RoomView
@@ -12,8 +13,10 @@ export function DiagnosticsPanel({ view }: DiagnosticsPanelProps) {
 
   const text = [
     '古代战棋诊断信息',
+    '版本: ' + versionLine(),
+    '页面: ' + (typeof window === 'undefined' ? '-' : window.location.href),
     '时间: ' + new Date().toISOString(),
-    '房间码: ' + (view.roomCode ?? '-'),
+    '房间码: ' + (view.roomCode ?? '-') + (view.passwordEnabled ? '（已设房间密码）' : ''),
     '角色: ' + view.role + (view.isHost ? '（房主）' : ''),
     '连接状态: ' + connectionLabel(view.connection) + '（' + view.connection + '）',
     // manual 传输不经过任何公共信令，写清楚以免排查时误判

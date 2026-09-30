@@ -82,6 +82,8 @@ export interface RoomView {
   game: GameState | null
   /** 房主选择的地图（null = 自动） */
   mapId: string | null
+  /** 是否启用了房间密码（只暴露布尔值，不回显明文） */
+  passwordEnabled: boolean
   /** 用户可见的连接状态（连接中 / 已连接 / 等待对手 / 重连中 / 失败） */
   connection: ConnectionState
   /** 传输层原始状态与说明（诊断面板用） */
@@ -115,6 +117,8 @@ export type ManualPairingState = { role: ManualRole; code: string | null; phase:
 export type { ConnectionState } from './connectionState'
 
 export interface RoomSessionOptions {
+  /** 带密码的传输工厂（可选；提供时优先使用，密码在 join 时才确定） */
+  transportFactoryForPassword?: (password: string | null) => TransportFactory
   playerId: PlayerId
   nickname: string
   strategy: SignalStrategy
@@ -129,7 +133,7 @@ export interface RoomSessionOptions {
 
 export interface RoomSession {
   getView: () => RoomView
-  join: (roomCode: string) => Promise<void>
+  join: (roomCode: string, password?: string) => Promise<void>
   /** 明确离开房间：会清掉房主侧的持久化对局（刷新/关闭标签页请用 dispose） */
   leave: () => Promise<void>
   setReady: (ready: boolean) => void
@@ -156,7 +160,6 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   const tickMs = options.tickMs ?? TICK_MS
   const selfId = options.playerId
   const storage = options.storage === undefined ? defaultStorage() : options.storage
-
   let status: TransportStatus = 'idle'
   let statusDetail: string | null = null
   let role: RoomRole = 'idle'
@@ -168,10 +171,20 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   let notice: string | null = null
   let error: string | null = null
   let transport: Transport | null = null
+  let roomPassword: string | null = null
   let timer: ReturnType<typeof setInterval> | null = null
   let helloAttempts = 0
   let lastHelloAt = 0
   let disposed = false
+  /**
+   * 会话已作废（leave 之后）。
+   * 为什么需要它：join() 里 `await transportFactory(...)` 可能要几百毫秒（动态 import + 建连），
+   * 若这期间发生了 leave（React StrictMode 的"挂载→卸载→再挂载"、用户秒点离开），
+   * 回调返回后 transport 才就绪，旧的 activate() 会把**已经离开的会话救活**：
+   * 它继续跑 tick、继续自任房主、继续 onChange 覆盖新会话的界面
+   * （v1.0.0 实测：刷新重连后列表只剩自己，就是旧会话在抢 UI）。
+   */
+  let closed = false
   let lastLobbyHost: PlayerId | null = null
   let lastLobbyRev = -1
   let game: GameState | null = null
@@ -271,6 +284,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       peerCount: transport ? transport.getPeers().length : 0,
       game,
       mapId: lobby?.mapId ?? null,
+      passwordEnabled: roomPassword !== null,
       myTurn: game !== null && game.phase === 'PLAYING' && game.players[game.turnIndex] === selfId,
       paused: pausedReason !== 'none',
       pausedReason,
@@ -457,8 +471,20 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         lastLobbyHost = null
         lastLobbyRev = -1
         if (ready) sendToPlayer({ t: 'ready', from: selfId, ready: true }, effect.hostId)
+        // 降级后必须重新自我介绍：新房主只有收到 hello 才会广播权威名单，
+        // 否则我们这边会停在"等待对手"（实测：刷新重连竞态下正是这样卡住的）
+        const peerId = playerToPeer.get(effect.hostId)
+        if (peerId) {
+          helloSent.delete(peerId)
+          sendHello(peerId)
+        }
       } else if (effect.type === 'broadcastHostHello') {
-        transport?.send({ t: 'hostHello', from: selfId, hostId: effect.hostId })
+        transport?.send({
+          t: 'hostHello',
+          from: selfId,
+          hostId: effect.hostId,
+          joinedAt: election?.joinedAt ?? now(),
+        })
       }
     }
   }
@@ -483,7 +509,11 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
         if (isHost() && lobby) {
           // 立即告诉新玩家谁是房主，避免对方空等 3 秒后误自任房主
-          transport?.send({ t: 'hostHello', from: selfId, hostId: selfId }, peerId)
+          // joinedAt 一并带上：对方即便还没收到我们的 hello，也能正确裁决竞态
+          transport?.send(
+            { t: 'hostHello', from: selfId, hostId: selfId, joinedAt: election?.joinedAt ?? now() },
+            peerId,
+          )
           // 若是掉线玩家回来了：恢复席位（对局进行中我们保留了他的座位）
           lobby = markConnected(lobby, msg.from)
           // 若对局已开始，补发完整快照（断线重连 / 中途加入）
@@ -502,7 +532,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       }
       case 'hostHello': {
         if (election) {
-          const result = electionHostHello(election, msg.hostId)
+          const result = electionHostHello(election, msg.hostId, msg.joinedAt ?? null)
           election = result.state
           applyEffects(result.effects)
         }
@@ -630,16 +660,22 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     election = result.state
     applyEffects(result.effects)
 
-    // 信令慢启动兜底：还没握手到任何 peer 时重发 hello
+    // 信令慢启动 / 房间继承兜底：出现下面任一情况就重发 hello
+    //   1) 还没握手到任何 peer（信令慢启动）
+    //   2) 有 peer，但名单里除了自己没有任何在线玩家（说明握手没走通：对方没回过 hello）
+    // 第 2 条是"静默分裂"的解药：刷新后新会话可能直接继承一个已建连的房间，
+    // 两端都不会再触发 onPeerJoin，于是谁都不再自我介绍 → 双方各自超时自任房主、名单永远只有自己。
     if (helloAttempts < HELLO_MAX_ATTEMPTS && now() - lastHelloAt >= HELLO_RETRY_MS) {
       const peers = transport?.getPeers().length ?? 0
-      if (peers === 0) sendHello()
+      const rosterKnown = (lobby?.players.filter((p) => p.connected).length ?? 0) > 1
+      if (peers === 0 || !rosterKnown) sendHello()
     }
     emit()
   }
 
   /** 拆掉当前房间连接与状态（不含提示文案的处理） */
   async function teardown(): Promise<void> {
+    closed = true
     if (timer) clearInterval(timer)
     timer = null
     if (transport) {
@@ -662,6 +698,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     statusDetail = null
     manualTransport = null
     manual = null
+    roomPassword = null
     errorLog = []
     peerToPlayer.clear()
     playerToPeer.clear()
@@ -684,6 +721,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     lastLobbyRev = -1
     helloAttempts = 0
     manual = null
+    roomPassword = null
     helloSent.clear()
     peerToPlayer.clear()
     playerToPeer.clear()
@@ -693,8 +731,17 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
   /** 传输就绪后启动会话循环（join 与手动直连共用） */
   function activate(created: Transport): void {
+    if (disposed || closed) {
+      void created.leave()
+      return
+    }
     transport = created
     sendHello()
+    // 关键：对"加入前就已经连上的 peer"补一次定向 hello。
+    // 场景（v1.0.0 实测踩到）：刷新页面时新会话可能直接继承一个已建连的房间
+    // （旧会话尚未释放 / Trystero 按 (appId, roomId) 复用 room），此时两端都不会再触发
+    // onPeerJoin，于是谁都不再自我介绍 → 双方各自超时自任房主 → 名单永远看不到对方。
+    for (const peerId of created.getPeers()) sendHello(peerId)
     if (timer) clearInterval(timer)
     timer = setInterval(runTick, tickMs)
     emit()
@@ -703,17 +750,20 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   return {
     getView: buildView,
 
-    async join(code: string): Promise<void> {
+    async join(code: string, password?: string): Promise<void> {
       if (disposed) return
+      closed = false
       const normalized = normalizeRoomCode(code)
       if (!isValidRoomCode(normalized)) {
-        error = '房间码必须是 6 位（仅使用易辨识字符）'
+        recordError('房间码必须是 6 位（仅使用易辨识字符）')
         emit()
         return
       }
       resetForRoom(normalized)
-      const created = await options.transportFactory(handlers)
-      if (disposed) {
+      roomPassword = password && password.trim().length > 0 ? password.trim().slice(0, 64) : null
+      const created = await options.transportFactory(handlers, roomPassword)
+      if (disposed || closed) {
+        // 会话已在等待期间被离开：连出来的传输必须立刻释放（否则 Trystero 的房间会被下一个会话继承）
         await created.leave()
         return
       }
@@ -722,6 +772,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
     async startManualPairing(code: string, pairingRole: ManualRole): Promise<void> {
       if (disposed) return
+      closed = false
       const normalized = normalizeRoomCode(code)
       if (!isValidRoomCode(normalized)) {
         error = '房间码必须是 6 位（仅使用易辨识字符）'
@@ -730,7 +781,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       }
       resetForRoom(normalized)
       const created = createManualTransport({ role: pairingRole, handlers })
-      if (disposed) {
+      if (disposed || closed) {
         await created.leave()
         return
       }
@@ -782,8 +833,9 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
     retryConnection(): void {
       const code = roomCode
+      const password = roomPassword ?? undefined
       if (!code) return
-      void this.leave().then(() => this.join(code))
+      void this.leave().then(() => this.join(code, password))
     },
 
     async leave(): Promise<void> {
