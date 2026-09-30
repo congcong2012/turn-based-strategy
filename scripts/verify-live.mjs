@@ -146,7 +146,7 @@ try {
   await pageC.locator('[data-testid=room-password-input]').fill('wrong-' + PASSWORD)
   await pageC.locator('[data-testid=join-button]').click()
   await pageC.waitForSelector('[data-testid=room-code-display]', { timeout: 30000 })
-  await sleep(20000)
+  await sleep(30000) // 密码不一致的报错要等对方的 offer 到达才会出现，给足时间
   const cItems = await pageC.locator('[data-testid=player-item]').count()
   const cErrorText = (await pageC.locator('[data-testid=error]').allInnerTexts()).join(' / ').trim()
   check('密码不一致时看不见对方（连接层拒绝配对）', cItems === 1, '列表 ' + cItems + ' 人')
