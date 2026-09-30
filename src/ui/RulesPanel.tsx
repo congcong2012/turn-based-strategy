@@ -95,6 +95,20 @@ export function RulesPanel({ onNavigate }: RulesPanelProps) {
         <p className="muted small">
           伤害 = 基础伤害 × 攻方剩余HP% ×（1 − 守方地形减伤），完全确定性、没有随机数。
         </p>
+        <ul className="rules-list">
+          <li>
+            <b>长枪兵</b>克骑兵（对轻骑 {DATA.matchup.spear.lightCav}／重骑 {DATA.matchup.spear.heavyCav}），但被刀盾兵压制
+          </li>
+          <li>
+            <b>刀盾兵</b>专精打步兵（对长枪 {DATA.matchup.sword.spear}、对弓兵 {DATA.matchup.sword.bow}），对骑兵很弱（对重骑仅 {DATA.matchup.sword.heavyCav}），便宜、能占领
+          </li>
+          <li>
+            <b>骑兵</b>猎杀弓兵与器械（轻骑对弓兵 {DATA.matchup.lightCav.bow}、对投石车 {DATA.matchup.lightCav.catapult}），但怕长枪兵
+          </li>
+          <li>
+            <b>弓兵</b>隔 2 格输出、<b>投石车</b>隔 2–3 格攻坚，被近身就很脆
+          </li>
+        </ul>
       </section>
 
       <section className="panel">

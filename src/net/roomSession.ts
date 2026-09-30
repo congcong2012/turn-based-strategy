@@ -601,10 +601,6 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         })
         break
       }
-      case 'startHint': {
-        notice = '房主开始了游戏（对局逻辑将在 M2 实现）'
-        break
-      }
       case 'bye': {
         handlePeerLeave(peerId)
         break

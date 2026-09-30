@@ -87,9 +87,20 @@ export function Lobby({
   return (
     <div className="app">
       <header className="app-header">
-        <h1>古代战棋 · 联机大厅</h1>
-        <p className="muted">
-          MVP 里程碑 M1：纯静态站点 + WebRTC P2P 房间。好友打开链接、输入同一房间码即可互相看见。
+        <div className="row head-row">
+          <h1>联机大厅</h1>
+          <button
+            type="button"
+            className="link-button"
+            data-testid="back-home"
+            onClick={() => onNavigate('home')}
+          >
+            ← 返回主页
+          </button>
+        </div>
+        <p className="muted small">
+          2–4 人回合制战棋：第一个进房的人是房主，全员准备后由房主开局（可给房间设密码）。
+          手机浏览器同样可玩，掉线或刷新都能回到原对局。
         </p>
       </header>
 

@@ -49,7 +49,6 @@ export type Wire =
   | { t: 'ready'; from: PlayerId; ready: boolean }
   | { t: 'nick'; from: PlayerId; nickname: string }
   | { t: 'roomFull'; from: PlayerId }
-  | { t: 'startHint'; from: PlayerId }
   | { t: 'bye'; from: PlayerId }
 
 /** 房间密码：Trystero 会用它派生信令密钥并做握手校验，密码不一致则根本配不上对 */

@@ -54,6 +54,20 @@ test.describe('主页 / 规则速查 / 单人练习', () => {
   })
 })
 
+test.describe('大厅', () => {
+  test('可以一键返回主页，且不再残留里程碑过时文案', async ({ page }) => {
+    await page.goto(localUrl('r-j', '甲将军'))
+    await expect(page.getByTestId('join-panel')).toBeVisible()
+    // 大厅顶部写的是当前玩法，不是"里程碑 M1…"
+    await expect(page.locator('.app-header')).not.toContainText('里程碑')
+    await expect(page.locator('.app-header')).toContainText('房主')
+
+    await page.getByTestId('back-home').click()
+    await expect(page.getByTestId('entry-online')).toBeVisible()
+    await expect(page.getByTestId('version-line')).toContainText('v')
+  })
+})
+
 test.describe('捐赠与版本号', () => {
   test('点击捐赠按钮显示收款码，图片真的加载成功（子路径 base 正确）', async ({ page }) => {
     await page.goto(localUrl('r-c', '甲将军'))

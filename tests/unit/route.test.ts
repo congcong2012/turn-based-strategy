@@ -34,6 +34,23 @@ describe('路由解析（主页 / 大厅 / 规则）', () => {
     expect(parseRoute('?page=lobby', '').page).toBe('lobby')
   })
 
+  it('hash 优先于 query：从 ?page=lobby 进大厅后点"返回主页"必须真的回主页', () => {
+    expect(parseRoute('?page=lobby', '#/home').page).toBe('home')
+    expect(parseRoute('?page=rules', '#/lobby').page).toBe('lobby')
+    // 邀请链接同理：点过导航之后以 hash 为准（房间信息仍然解析出来备用）
+    const invited = parseRoute('?room=AB23CD&key=tea&page=lobby', '#/home')
+    expect(invited.page).toBe('home')
+    expect(invited.roomCode).toBe('AB23CD')
+    expect(invited.roomKey).toBe('tea')
+    // 没有 hash 时，邀请链接照旧直达大厅
+    expect(parseRoute('?room=AB23CD', '').page).toBe('lobby')
+  })
+
+  it('无法识别的 hash 不生效（回退到 query / 主页）', () => {
+    expect(parseRoute('', '#/nope').page).toBe('home')
+    expect(parseRoute('?page=lobby', '#/nope').page).toBe('lobby')
+  })
+
   it('非法房间码不算邀请链接（回主页，不误进大厅）', () => {
     expect(parseRoute('?room=ab1', '').page).toBe('home')
     expect(parseRoute('?room=', '').page).toBe('home')

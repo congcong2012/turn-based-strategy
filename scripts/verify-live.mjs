@@ -92,6 +92,17 @@ try {
   // ---------- 5. 加密房 + 邀请链接 ----------
   await pageA.locator('[data-testid=entry-online]').click()
   await pageA.waitForSelector('[data-testid=join-panel]', { timeout: 10000 })
+
+  // 大厅顶部的文案必须是当前玩法，而不是开发过程中的里程碑说明
+  const lobbyHeader = await pageA.locator('.app-header').innerText()
+  check('大厅顶部无过时过程文案', !lobbyHeader.includes('里程碑') && lobbyHeader.includes('房主'), lobbyHeader.split('\n')[0])
+
+  // 大厅可以一键返回主页（v1.1.0：之前只能靠浏览器后退）
+  await pageA.locator('[data-testid=back-home]').click()
+  await pageA.waitForSelector('[data-testid=entry-online]', { timeout: 10000 })
+  check('大厅可返回主页', true)
+  await pageA.locator('[data-testid=entry-online]').click()
+  await pageA.waitForSelector('[data-testid=join-panel]', { timeout: 10000 })
   await pageA.locator('[data-testid=nickname-input]').fill('线上甲将军')
   await pageA.locator('[data-testid=room-code-input]').fill(ROOM)
   await pageA.locator('[data-testid=room-password-input]').fill(PASSWORD)

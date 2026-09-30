@@ -35,11 +35,15 @@ describe('伤害公式（GDD 7.1）', () => {
     expect(computeDamage(state, attacker, defender, data)).toBe(38)
   })
 
-  it('克制矩阵：长枪克重骑、刀盾对重骑几乎无效', () => {
+  it('克制矩阵：长枪克重骑、刀盾反步兵但对重骑几乎无效', () => {
     expect(baseDamage('spear', 'heavyCav', data)).toBe(55)
-    expect(baseDamage('sword', 'heavyCav', data)).toBe(15)
+    expect(baseDamage('sword', 'heavyCav', data)).toBe(12)
     expect(baseDamage('lightCav', 'bow', data)).toBe(75)
     expect(baseDamage('bow', 'lightCav', data)).toBe(55)
+    // v1.1.0：刀盾兵改为反步兵专精（详见 tests/unit/matchup.test.ts）
+    expect(baseDamage('sword', 'spear', data)).toBe(75)
+    expect(baseDamage('sword', 'bow', data)).toBe(80)
+    expect(baseDamage('sword', 'lightCav', data)).toBe(45)
   })
 
   it('反击条件：射程覆盖且兵种可反击（投石车不可）', () => {

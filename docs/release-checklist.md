@@ -15,7 +15,7 @@
 
 ```bash
 pnpm typecheck      # 期望：无输出（tsc 通过）
-pnpm test           # 期望：129 passed
+pnpm test           # 期望：138 passed
 ```
 
 通过标准：**0 failed**。经济数值改过的话，额外看曲线：
@@ -35,7 +35,7 @@ pnpm build          # 期望：0 error；记录主包与 Pixi 分包体积
 ## 3. 端到端回归（4 条轨道，全绿才算过）
 
 ```bash
-pnpm exec playwright test --project=local     # 28 passed（约 2.5 分钟，不需要公网）
+pnpm exec playwright test --project=local     # 29 passed（约 2.5 分钟，不需要公网）
 pnpm exec playwright test --project=mobile    # 2 passed（Pixel 5 视口 + 触摸）
 pnpm exec playwright test --project=preview   # 3 passed（dist 产物 + 子路径）
 pnpm exec playwright test --project=p2p       # 1 passed（真实 WebRTC + 公共信令，抖动可重试一次）
@@ -64,7 +64,7 @@ node scripts/serve-subpath.mjs turn-based-strategy 4180
 | 2 | 主页「单人练习」 | 标注「开发中」，点击弹出说明弹层，能关闭 |
 | 3 | 主页「规则速查」 | 兵种/克制/地形/经济表格有数据；「返回主页」可用 |
 | 4 | 页脚 | 显示 `v<版本号> · 日期 · commit`；「❤ 请我喝杯茶」能打开收款码弹层，**二维码图片显示正常** |
-| 5 | 「联机对战」→ 大厅 | 昵称、房间码、房间密码输入框都在；房间码归一化（小写→大写） |
+| 5 | 「联机对战」→ 大厅 | 昵称、房间码、房间密码输入框都在；房间码归一化（小写→大写）；顶部是**当前玩法说明**（不应出现"里程碑 M1"这类过程文案），右上角「← 返回主页」可用 |
 | 6 | 房主设密码建房 | 房内出现「已加密」徽章与密码提示 |
 | 7 | 「复制邀请链接」 | 链接形如 `...?room=ABC23D&key=密码`；好友点开时房间码**与密码**都已填好 |
 | 8 | 密码不一致 | 两边都能进房但互相看不见，页面**不报错**；提示语说明了这一点（不是 bug） |
@@ -102,7 +102,8 @@ git push origin v1.0.0
 
   ```bash
   node scripts/verify-live.mjs
-  # 期望：线上自检结果：15/15 通过，退出码 0
+  # 期望：线上自检结果：全部 ✅（约 19–20 项，退出码 0）
+  # 说明：其中"错误密码的提示是否中文化"是条件断言，受网络时序影响可能被跳过，不影响结论
   # 本地复现线上子路径：LIVE_URL=http://127.0.0.1:4180/turn-based-strategy/ node scripts/verify-live.mjs
   ```
 
@@ -117,4 +118,5 @@ git push origin v1.0.0
 | 线上白屏 | 检查 Pages Source 是否为 GitHub Actions；检查 `dist/index.html` 资源路径是否为相对路径 |
 | 线上资源 404 | 说明 base 被改成了绝对路径（`VITE_BASE` 只接受 `/repo/` 形式） |
 | 只有部分玩家连不上 | 让对方点「切换信令」→「手动直连」→ 发回诊断信息 |
+| E2E 报 `ERR_CONNECTION_REFUSED` 或莫名超时 | 上一次被中断的 E2E 留下了半死的 dev/preview 服务器（Playwright 会复用它们）。**重跑该 project**；仍不行就先结束占用 5173/4173 的进程（注意别误杀别的 node 进程） |
 | 版本号不对 | CI 没跑 / 缓存没刷新；重跑工作流并强刷（Ctrl+F5） |
