@@ -1,6 +1,7 @@
 /** 连接状态推导（纯函数，便于单测；房主权威之外唯一需要"猜"的地方） */
 
 import type { TransportStatus } from './types'
+import { isPasswordError } from './transportErrorText'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'waiting' | 'reconnecting' | 'failed'
 
@@ -54,10 +55,16 @@ export function deriveConnectionState(input: ConnectionInput): ConnectionState {
   return 'waiting'
 }
 
-/** 给用户看的下一步建议（失败时才有意义） */
-export function recoveryHint(state: ConnectionState, strategy: string): string | null {
+/**
+ * 给用户看的下一步建议（失败时才有意义）。
+ * detail 是传输层原文：房间密码不一致时**不能**建议去切信令（那是完全无关的动作）。
+ */
+export function recoveryHint(state: ConnectionState, strategy: string, detail?: string | null): string | null {
   if (state === 'connected' || state === 'waiting' || state === 'idle') return null
   if (state === 'connecting') return null
+  if (isPasswordError(detail)) {
+    return '房间密码不一致：请和房主核对密码（区分大小写），或直接打开房主发来的邀请链接（链接里自带密码）。'
+  }
   if (state === 'reconnecting') return '正在尝试重连；若一直连不上，可用「手动直连」面对面交换连接码。'
   return strategy === 'mqtt'
     ? '公共信令连不上：可以试试切换 Torrent 信令，或改用手动直连（通过微信互发连接码）。'

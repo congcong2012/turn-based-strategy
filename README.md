@@ -4,7 +4,7 @@
 所有游戏逻辑跑在房主浏览器里，通过 WebRTC 直连同步，部署在 GitHub Pages 上。
 
 **线上地址**：https://congcong2012.github.io/turn-based-strategy/
-当前版本：**v1.0.1**（页脚会显示版本号 · 构建日期 · commit，变更记录见 CHANGELOG.md）
+当前版本：**v1.0.2**（页脚会显示版本号 · 构建日期 · commit，变更记录见 CHANGELOG.md）
 
 ---
 
@@ -62,7 +62,7 @@
 ```bash
 pnpm install
 pnpm dev            # http://127.0.0.1:5173
-pnpm test           # 单元测试（124 个）
+pnpm test           # 单元测试（129 个）
 pnpm e2e            # 端到端测试（34 个，含真实 P2P、手动直连与移动端）
 pnpm build          # 类型检查 + 生产构建
 pnpm preview        # 预览构建产物

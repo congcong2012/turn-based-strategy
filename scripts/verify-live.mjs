@@ -150,9 +150,13 @@ try {
   const cItems = await pageC.locator('[data-testid=player-item]').count()
   const cErrorText = (await pageC.locator('[data-testid=error]').allInnerTexts()).join(' / ').trim()
   check('密码不一致时看不见对方（连接层拒绝配对）', cItems === 1, '列表 ' + cItems + ' 人')
-  // 不把"是否弹提示"当成硬性要求：不同浏览器/网络下信令层可能给出不同的失败提示，
-  // 关键是**不能配上对**（上面那条），并且页面不能崩（下面第 9 组）。
-  console.log('  ℹ️  错误密码方的界面提示：' + (cErrorText || '（无）'))
+  // 提示文案必须是中文且指向密码（Trystero 原文是
+  // "incorrect room password when decrypting offer"，直接甩给玩家毫无帮助）
+  if (cErrorText) {
+    check('错误密码的提示已中文化并指向密码', cErrorText.includes('房间密码'), cErrorText.slice(0, 60))
+  } else {
+    console.log('  ℹ️  错误密码方暂无提示（浏览器/网络差异，仅影响提示不影响结论）')
+  }
 
   // ---------- 8. 刷新重连（v1.0.0 修复的重点） ----------
   await pageB.reload({ waitUntil: 'domcontentloaded' })

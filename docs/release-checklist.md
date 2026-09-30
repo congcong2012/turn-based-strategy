@@ -15,7 +15,7 @@
 
 ```bash
 pnpm typecheck      # 期望：无输出（tsc 通过）
-pnpm test           # 期望：124 passed
+pnpm test           # 期望：129 passed
 ```
 
 通过标准：**0 failed**。经济数值改过的话，额外看曲线：
@@ -42,7 +42,9 @@ pnpm exec playwright test --project=p2p       # 1 passed（真实 WebRTC + 公�
 pnpm exec playwright test --project=manual    # 1 passed（手动直连 SDP 交换，约 1 分钟）
 ```
 
-通过标准：**0 failed**。真实的 `p2p` 用例依赖公共信令，偶发失败先重试一次再判定。
+通过标准：**0 failed**。
+`p2p` 依赖公共信令、`manual` 依赖裸 WebRTC 打洞，两者都会受网络与机器负载影响：
+**偶发失败先单跑一次**（`--project=p2p` / `--project=manual`）确认，仍失败才当缺陷处理。
 
 ## 4. 子路径复现（线上环境的本地替身）
 

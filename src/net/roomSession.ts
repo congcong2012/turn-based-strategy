@@ -31,6 +31,7 @@ import { isValidRoomCode, normalizeRoomCode } from '../app/roomCode'
 import { deriveConnectionState } from './connectionState'
 import type { ConnectionState } from './connectionState'
 import { createManualTransport } from './manualTransport'
+import { describeTransportError } from './transportErrorText'
 import type { ManualRole, ManualTransport } from './manualTransport'
 import { defaultStorage, loadGame, saveGame } from './gameStore'
 import type { GameStorage } from './gameStore'
@@ -647,8 +648,9 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     onPeerLeave: handlePeerLeave,
     onStatus: (next: TransportStatus, detail?: string) => {
       status = next
-      statusDetail = detail ?? null
-      if (next === 'failed' && detail) recordError(detail)
+      // 传输层是英文错误（Trystero 抛出），这里翻成玩家能照做的中文提示
+      statusDetail = detail ? describeTransportError(detail) : null
+      if (next === 'failed' && statusDetail) recordError(statusDetail)
       if (manual && next === 'connected') manual = { ...manual, phase: 'connected', error: null }
       emit()
     },

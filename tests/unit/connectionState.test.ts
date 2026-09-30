@@ -30,4 +30,11 @@ describe('连接状态推导', () => {
     expect(recoveryHint('connected', 'mqtt')).toBeNull()
     expect(recoveryHint('waiting', 'mqtt')).toBeNull()
   })
+
+  it('房间密码问题给密码建议，不误导玩家去切信令', () => {
+    const hint = recoveryHint('failed', 'mqtt', 'incorrect room password when decrypting offer')
+    expect(hint).toContain('房间密码不一致')
+    expect(hint).not.toContain('Torrent')
+    expect(hint).not.toContain('信令')
+  })
 })

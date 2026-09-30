@@ -9,7 +9,8 @@ export interface ConnectionHelpProps {
 
 /** 连不上时给出明确原因 + 下一步动作（切信令 / 手动直连） */
 export function ConnectionHelp({ view, onSwitchStrategy, onManual }: ConnectionHelpProps) {
-  const hint = recoveryHint(view.connection, view.strategy)
+  // 密码问题用密码专用建议（detail 是已中文化的传输层原文）
+  const hint = recoveryHint(view.connection, view.strategy, view.transportDetail)
   if (!hint) return null
   return (
     <div className="alert error" data-testid="connection-help">

@@ -227,6 +227,11 @@ Trystero 的 `password` 参与 SDP 密钥派生（`genKey`）**并且**参与握
 密码只暴露布尔值（`RoomView.passwordEnabled`）给 UI，诊断面板写"已设房间密码"而不回显明文；
 手动直连（走带外 SDP）不参与密码机制，UI 会说明这一点。
 
+密码错误时 Trystero 会抛出英文错误（`incorrect room password when decrypting offer`）。
+虽然"配不上对"这件事本身是预期的，但把英文原文丢给玩家毫无帮助，而且这不是信令问题：
+`src/net/transportErrorText.ts` 把已知传输错误翻成中文可执行提示，
+`recoveryHint(state, strategy, detail)` 在密码问题上**不再建议切换信令**。
+
 ### ADR-18：主页、路由与版本号（v1.0.0）
 
 - **路由只用 query / hash**（`src/app/route.ts`，纯函数 `parseRoute`）：GitHub Pages 是纯静态托管，
