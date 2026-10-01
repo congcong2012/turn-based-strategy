@@ -292,7 +292,7 @@ Trystero 的 `password` 参与 SDP 密钥派生（`genKey`）**并且**参与握
 `tests/unit/roomSession.test.ts`（leave 期间完成的 join 不得复活、继承房间也能收敛为客户端）、
 `tests/e2e/p2p.spec.ts`（真实网络下真实刷新重连，修复后从"60 秒超时失败"变成 13 秒通过）。
 
-### ADR-20：单人练习（PVE）= 纯前端本地会话，不引入任何网络与后端（v1.2.0）
+### ADR-20：单人练习（PVE）= 纯前端本地会话，不引入任何网络与后端（未发布）
 
 **决策**：PVE 不走 `roomSession`/`Transport`，而是新增 `src/app/pveSession.ts` —— 它自己持有
 `GameState`、自己调 `applyCommand`，并对外产出**与联机同形状的 `RoomView`**。
