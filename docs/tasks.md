@@ -177,9 +177,8 @@
 交付物
 - [x] **房间密码（可选）**：`joinRoom({ password })` 参与 SDP 密钥派生与握手校验；
       邀请链接自动带 `&key=`；刷新后记住密码（sessionStorage）；大厅显示「已加密」徽章与"密码不一致会静默等待"的提示
-- [x] **主页**（`src/ui/HomePage.tsx`）：联机对战 / 单人练习-预留 / 规则速查三入口 + 三步开局说明；
+- [x] **主页**（`src/ui/HomePage.tsx`）：联机对战 / 单人练习 / 规则速查三入口 + 三步开局说明；
       邀请链接（`?room=`）仍然直达大厅
-- [x] **PVE 占位**：按钮标注「开发中」，点击弹出说明弹层（纯前端 AI 计划，不引入服务器）
 - [x] **规则速查页**（`src/ui/RulesPanel.tsx`）：兵种 / 克制矩阵 / 地形 / 据点经济 / 胜负 / 操作，全部由 `src/data/*.json` 渲染
 - [x] **捐赠入口**：页脚「❤ 请我喝杯茶」→ 弹层显示 `public/donate-qrcode.png`（静态图片，零第三方脚本）
 - [x] **版本号**：构建期注入（`__APP_VERSION__` / `__BUILD_TIME__` / `__GIT_SHA__`），页脚与诊断面板都显示
@@ -246,6 +245,30 @@
 | E2E | ✅ 36 passed（local 29 新增"大厅返回主页 + 无过时文案"） |
 | 线上自检 | ✅ `node scripts/verify-live.mjs` 对已部署站点全绿 |
 
+## M9 · 单人练习（PVE）· 已完成（v1.2.0）
+
+纯前端本地 AI 对手，**完全离线**；与好友局共用同一份规则内核。
+
+交付物
+- [x] **合法指令枚举**（`src/game/legalCommands.ts`）：`legalCommandsFor(state, playerId)`，校验与 `commands.ts` 一一对应；
+      单测守住核心不变量——枚举出的**每一条**指令都必须被 `applyCommand` 接受
+- [x] **AI 决策**（`src/ai/`）：`rng.ts`（确定性 PRNG；内核保持零随机）、`evaluate.ts`（局面评估）、
+      `index.ts`（贪心 + 一步前瞻；`easy` / `normal` 两档难度）
+- [x] **本地会话**（`src/app/pveSession.ts`）：自己持有 GameState、驱动 AI，产出与联机**同形状**的 `RoomView`，不注入 Transport
+- [x] **共用战报**（`src/game/journal.ts`）：从 roomSession 抽出，联机与单人共用同一份实现（文案与裁剪语义一致）
+- [x] **UI**：`PveSetup.tsx` 设置页（对手数量 / 我的阵营 / 难度）、`usePveGame.ts` 接线、
+      `GameScreen` 加 `mode` 门控复用棋盘与交互、`route.ts` 新增 `pve` 页
+- [x] **顺带修复内核缺陷**：地图边缘的兵营生产出场时抛 `越界`（`state.ts` 缺少边界检查），已修复并补回归用例
+
+验收
+| 项 | 结果 |
+| --- | --- |
+| 单元测试 | ✅ 202 passed（新增 legalCommands 22、AI 26、pveSession 14、路由 1、内核回归 1） |
+| E2E（local） | ✅ 34 passed（其中 PVE 新增 5 条：设置页 / 开局部署 / AI 真的会行动 / 认输结算与再来一局 / 3 个 AI 四人图） |
+| 生产构建 | ✅ 用真实 dist 产物核验：可离线开局、AI 自动部署并行动、**全程零外部请求**、无页面错误 |
+
+已知取舍：3 方打四角图会空出第 4 角（该角王城/兵营变中立，占领可得 +1800/回合但不淘汰任何人）；PVE 不做存档、不做组队。
+
 ## M8 · 待办（按价值排序）
 
 - [ ] 观战/回放（数据已预留：种子 + 完整状态 + 指令流）
@@ -258,12 +281,12 @@
 ```bash
 pnpm install          # 安装依赖
 pnpm dev              # 本地开发（http://127.0.0.1:5173）
-pnpm test             # 单元测试（138 个）
+pnpm test             # 单元测试（202 个）
 pnpm build            # 类型检查 + 生产构建（dist/）
 pnpm preview          # 预览生产构建（http://127.0.0.1:4173）
-pnpm e2e:local        # 本地传输 E2E（26 个，无需网络，约 2.5 分钟）
+pnpm e2e:local        # 本地传输 E2E（无需网络）
 pnpm e2e:p2p          # 真实 P2P E2E（需要公网信令）
-pnpm e2e              # 全部 E2E（36 个：local 29 / mobile 2 / preview 3 / p2p 1 / manual 1）
+pnpm e2e              # 全部 E2E（local / mobile / preview / p2p / manual 五条轨道）
 ```
 
 > 首次运行 E2E 需要 `pnpm exec playwright install chromium`（约 170MB）。

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { normalizeRoomCode } from './roomCode'
 
-export type Page = 'home' | 'lobby' | 'rules'
+export type Page = 'home' | 'lobby' | 'rules' | 'pve'
 
 export interface Route {
   page: Page
@@ -20,7 +20,7 @@ function keyFromSearch(search: string): string | null {
   return clean.length > 0 ? clean : null
 }
 
-const PAGES: Page[] = ['home', 'lobby', 'rules']
+const PAGES: Page[] = ['home', 'lobby', 'rules', 'pve']
 
 function asPage(raw: string): Page | null {
   const value = raw.toLowerCase()

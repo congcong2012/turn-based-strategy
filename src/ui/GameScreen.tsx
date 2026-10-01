@@ -19,6 +19,13 @@ import type { BoardView } from '../render/boardApp'
 export interface GameScreenProps {
   view: RoomView
   actions: RoomActions
+  /**
+   * 'online'（默认）= 联机对战，行为与旧版逐字节一致；
+   * 'pve' = 纯离线单人练习：隐藏一切联网片段（连接徽章/房间号/暂停横幅/诊断面板）。
+   */
+  mode?: 'online' | 'pve'
+  /** 仅 pve：结算后"再来一局" */
+  onRestart?: () => void
 }
 
 const ROLE_COLORS = ['#c8503c', '#3fa7a0', '#d9a441', '#8a6fd0']
@@ -32,7 +39,7 @@ function nameOf(view: RoomView, playerId: PlayerId): string {
   return view.players.find((p) => p.playerId === playerId)?.nickname ?? playerId.slice(0, 6)
 }
 
-export function GameScreen({ view, actions }: GameScreenProps) {
+export function GameScreen({ view, actions, mode = 'online', onRestart }: GameScreenProps) {
   const game = view.game as GameState
   const [armedType, setArmedType] = useState<string | null>(null)
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
@@ -158,7 +165,8 @@ export function GameScreen({ view, actions }: GameScreenProps) {
     setSelectedBuildingId(null)
   }, [])
 
-  const frozen = view.pausedReason === 'host-offline'
+  // 单人模式不存在"房主掉线"，永不冻结
+  const frozen = mode === 'online' && view.pausedReason === 'host-offline'
 
   // 进入部署阶段：自动把镜头对准己方部署区（避免"看不到自己的区域、点了却被告知不在部署区"）
   useEffect(() => {
@@ -308,37 +316,50 @@ export function GameScreen({ view, actions }: GameScreenProps) {
         <button type="button" data-testid="locate-button" onClick={locate} title="把镜头对准我的部署区 / 部队">
           🎯 定位
         </button>
-        <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
-        <span className="hud-item muted small">房间 {view.roomCode}</span>
+        {mode === 'online' ? (
+          <>
+            <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
+            <span className="hud-item muted small">房间 {view.roomCode}</span>
+          </>
+        ) : (
+          <span className="hud-item muted small" data-testid="pve-badge">
+            单人练习
+          </span>
+        )}
         <button type="button" data-testid="sound-toggle" onClick={toggleSound} title="音效开关">
           {soundOn ? '🔊 音效' : '🔇 静音'}
         </button>
         <button type="button" data-testid="leave-button" onClick={() => actions.leave()}>
-          离开
+          {mode === 'pve' ? '退出对局' : '离开'}
         </button>
       </header>
 
-      {view.paused ? (
-        <div className="pause-banner" data-testid="pause-banner">
-          <span>
-            {view.pausedReason === 'host-offline'
-              ? '房主已断线，游戏暂停，等待其重连…（刷新页面不影响，房主回来后自动继续）'
-              : '对手已断线，等待重连…（对局与你的操作都已保留）'}
-          </span>
-          {view.canSkipTurn ? (
-            <button type="button" data-testid="skip-turn" onClick={() => actions.skipDisconnectedTurn()}>
-              跳过其回合
-            </button>
+      {/* 以下是纯联机片段：单人模式没有房主、没有断线、没有信令可切 */}
+      {mode === 'online' ? (
+        <>
+          {view.paused ? (
+            <div className="pause-banner" data-testid="pause-banner">
+              <span>
+                {view.pausedReason === 'host-offline'
+                  ? '房主已断线，游戏暂停，等待其重连…（刷新页面不影响，房主回来后自动继续）'
+                  : '对手已断线，等待重连…（对局与你的操作都已保留）'}
+              </span>
+              {view.canSkipTurn ? (
+                <button type="button" data-testid="skip-turn" onClick={() => actions.skipDisconnectedTurn()}>
+                  跳过其回合
+                </button>
+              ) : null}
+            </div>
           ) : null}
-        </div>
-      ) : null}
 
-      <ConnectionHelp view={view} onSwitchStrategy={() => actions.setStrategy(view.strategy === 'mqtt' ? 'torrent' : 'mqtt')} />
+          <ConnectionHelp view={view} onSwitchStrategy={() => actions.setStrategy(view.strategy === 'mqtt' ? 'torrent' : 'mqtt')} />
 
-      {!view.paused && view.offlinePlayers.length > 0 ? (
-        <div className="pause-banner soft" data-testid="offline-hint">
-          <span>{view.offlinePlayers.map((p) => nameOf(view, p)).join('、')} 已断线，等待重连…（席位与部队都已保留）</span>
-        </div>
+          {!view.paused && view.offlinePlayers.length > 0 ? (
+            <div className="pause-banner soft" data-testid="offline-hint">
+              <span>{view.offlinePlayers.map((p) => nameOf(view, p)).join('、')} 已断线，等待重连…（席位与部队都已保留）</span>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       <div className="game-body">
@@ -382,7 +403,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
                 disabled={!!myDeploy?.done || (myDeploy?.placed ?? 0) < 1 || frozen}
                 onClick={() => actions.sendCommand({ type: 'deployDone' })}
               >
-                {myDeploy?.done ? '等待对手…' : '完成部署'}
+                {myDeploy?.done ? (mode === 'pve' ? '等待 AI…' : '等待对手…') : '完成部署'}
               </button>
               <p className="muted small">
                 {view.players.map((p) => (
@@ -398,7 +419,11 @@ export function GameScreen({ view, actions }: GameScreenProps) {
               <section>
                 <h2>对局</h2>
                 <p className="muted small">
-                  {view.myTurn ? '轮到你了：点己方单位 → 蓝格移动 / 红格攻击' : '等待对手行动…'}
+                  {view.myTurn
+                    ? '轮到你了：点己方单位 → 蓝格移动 / 红格攻击'
+                    : mode === 'pve'
+                      ? '等待 AI 行动…'
+                      : '等待对手行动…'}
                 </p>
                 <div className="score-rows">
                   {game.players.map((p) => (
@@ -550,7 +575,7 @@ export function GameScreen({ view, actions }: GameScreenProps) {
               {view.error}
             </p>
           ) : null}
-          <DiagnosticsPanel view={view} />
+          {mode === 'online' ? <DiagnosticsPanel view={view} /> : null}
           <p className="muted small">
             地图：{map.name}（{map.width}×{map.height}） · 拖拽平移，滚轮缩放
           </p>
@@ -568,9 +593,20 @@ export function GameScreen({ view, actions }: GameScreenProps) {
               {game.winner === null ? '双方同分' : nameOf(view, game.winner) + ' 获胜'}
               （{game.winReason === 'hq_captured' ? '攻陷王城' : game.winReason === 'annihilation' ? '全歼敌军' : game.winReason === 'score' ? '回合上限计分' : '对手投降'}）
             </p>
-            <button type="button" className="primary" data-testid="back-to-lobby" onClick={() => actions.leave()}>
-              返回大厅
-            </button>
+            {mode === 'pve' ? (
+              <>
+                <button type="button" className="primary block" data-testid="pve-again" onClick={() => onRestart?.()}>
+                  再来一局
+                </button>
+                <button type="button" className="block" data-testid="pve-home" onClick={() => actions.leave()}>
+                  返回主页
+                </button>
+              </>
+            ) : (
+              <button type="button" className="primary" data-testid="back-to-lobby" onClick={() => actions.leave()}>
+                返回大厅
+              </button>
+            )}
           </div>
         </div>
       ) : null}

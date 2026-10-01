@@ -36,12 +36,11 @@ import type { ManualRole, ManualTransport } from './manualTransport'
 import { defaultStorage, loadGame, saveGame } from './gameStore'
 import type { GameStorage } from './gameStore'
 import { applyCommand } from '../game/commands'
-import { describeEvents } from '../game/logText'
-import type { LogContext } from '../game/logText'
 import { defaultMapFor } from '../game/data'
 import { describeErrorCode } from '../game/errorText'
+import { appendJournal, emptyJournal } from '../game/journal'
+import type { Journal, LoggedEvent } from '../game/journal'
 import { createGame } from '../game/state'
-import { buildingType, unitType } from '../game/data'
 import type { Command, GameEvent, GameState } from '../game/types'
 import type {
   LobbyPlayer,
@@ -109,7 +108,8 @@ export interface RoomView {
   events: LoggedEvent[]
 }
 
-export type LoggedEvent = { seq: number; event: GameEvent }
+/** 与 roomSession 同源：战报/事件累积器的实现已抽到 game/journal（联机与单人共用） */
+export type { LoggedEvent }
 
 /** 手动直连（SDP 交换）的配对状态 */
 export type ManualPhase = 'creating' | 'need-offer' | 'need-answer' | 'connecting' | 'connected' | 'failed'
@@ -189,9 +189,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   let lastLobbyHost: PlayerId | null = null
   let lastLobbyRev = -1
   let game: GameState | null = null
-  let log: string[] = []
-  let recentEvents: LoggedEvent[] = []
-  let eventSeq = 0
+  let journal: Journal = emptyJournal()
   let manualTransport: ManualTransport | null = null
   let manual: ManualPairingState | null = null
   let errorLog: Array<{ at: number; text: string }> = []
@@ -291,8 +289,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       pausedReason,
       canSkipTurn: isHost() && currentOffline && game?.phase === 'PLAYING',
       offlinePlayers: players.filter((p) => !p.connected).map((p) => p.playerId),
-      log,
-      events: recentEvents,
+      log: journal.log,
+      events: journal.events,
       connection: deriveConnection(),
       transportStatus: status,
       transportDetail: statusDetail,
@@ -319,30 +317,14 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     })
   }
 
+  /** 玩家 id → 昵称（战报用） */
+  function nameOfPlayer(playerId: PlayerId): string {
+    return lobby?.players.find((p) => p.playerId === playerId)?.nickname ?? (playerId === selfId ? nickname : playerId.slice(0, 6))
+  }
+
   /** 把内核事件翻译成战报（用"变更前"的状态解析已被歼灭单位/已易主据点的名字） */
   function appendLog(events: GameEvent[], before: GameState | null, after: GameState): void {
-    if (events.length === 0) return
-    void after
-    const nameOf = (playerId: PlayerId): string =>
-      lobby?.players.find((p) => p.playerId === playerId)?.nickname ?? (playerId === selfId ? nickname : playerId.slice(0, 6))
-    const ctx: LogContext = {
-      unitName: (unitId) => {
-        const unit = before?.units.find((u) => u.id === unitId) ?? after.units.find((u) => u.id === unitId)
-        if (!unit) return '某部队'
-        return unitType(unit.type).name + '·' + nameOf(unit.owner)
-      },
-      buildingName: (buildingId) => {
-        const building = before?.buildings.find((b) => b.id === buildingId) ?? after.buildings.find((b) => b.id === buildingId)
-        return building ? buildingType(building.type).name : '据点'
-      },
-      playerName: nameOf,
-    }
-    log = [...log, ...describeEvents(events, ctx)].slice(-60)
-    const logged = events.map((event) => {
-      eventSeq += 1
-      return { seq: eventSeq, event }
-    })
-    recentEvents = [...recentEvents, ...logged].slice(-12)
+    journal = appendJournal(journal, events, before, after, nameOfPlayer)
   }
 
   function broadcastGame(events: GameEvent[] = []): void {
@@ -687,9 +669,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     role = 'idle'
     roomCode = null
     ready = false
-    log = []
-    recentEvents = []
-    eventSeq = 0
+    journal = emptyJournal()
     lastLobbyHost = null
     lastLobbyRev = -1
     status = 'idle'
@@ -712,9 +692,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     ready = false
     lobby = null
     game = null
-    log = []
-    recentEvents = []
-    eventSeq = 0
+    journal = emptyJournal()
     lastLobbyHost = null
     lastLobbyRev = -1
     helloAttempts = 0

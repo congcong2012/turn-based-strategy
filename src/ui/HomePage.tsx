@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { versionLine } from '../version'
 import type { Page } from '../app/route'
 import { AppFooter } from './AppFooter'
@@ -9,10 +8,8 @@ export interface HomePageProps {
   roomCode: string | null
 }
 
-/** 主页：三个入口（联机对战 / 单人练习-预留 / 规则速查），底部是版本与捐赠 */
+/** 主页：三个入口（联机对战 / 单人练习 / 规则速查），底部是版本与捐赠 */
 export function HomePage({ onNavigate, roomCode }: HomePageProps) {
-  const [pveOpen, setPveOpen] = useState(false)
-
   return (
     <div className="app home-page">
       <header className="app-header home-header">
@@ -32,12 +29,10 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
           </span>
         </button>
 
-        <button type="button" className="entry-card" data-testid="entry-pve" onClick={() => setPveOpen(true)}>
+        <button type="button" className="entry-card" data-testid="entry-pve" onClick={() => onNavigate('pve')}>
           <span className="entry-icon">🏯</span>
-          <span className="entry-title">
-            单人练习 <span className="tag tag-waiting">开发中</span>
-          </span>
-          <span className="entry-desc">本地 AI 对手，不需要联网、不需要服务器</span>
+          <span className="entry-title">单人练习</span>
+          <span className="entry-desc">和本地 AI 打一局，1–3 个对手，不需要联网</span>
         </button>
 
         <button type="button" className="entry-card" data-testid="entry-rules" onClick={() => onNavigate('rules')}>
@@ -59,21 +54,6 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
 
       <AppFooter onNavigate={onNavigate} />
       <p className="muted small" style={{ textAlign: 'center' }}>{versionLine()}</p>
-
-      {pveOpen ? (
-        <div className="overlay" data-testid="pve-dialog" onClick={() => setPveOpen(false)}>
-          <div className="overlay-card" onClick={(event) => event.stopPropagation()}>
-            <h2>单人练习（开发中）</h2>
-            <p className="muted small">
-              计划做一个纯前端的 AI 对手：不联网、不需要服务器，用现有规则内核 + 一个简单的搜索/评估 AI 就能跑。
-            </p>
-            <p className="muted small">当前版本请先和朋友联机对战，或一个人开两个标签页试规则（同一台电脑可用）。</p>
-            <button type="button" className="primary" onClick={() => setPveOpen(false)}>
-              知道了
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }

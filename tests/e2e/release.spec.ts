@@ -25,13 +25,15 @@ test.describe('主页 / 规则速查 / 单人练习', () => {
     await expect(page.getByTestId('version-line')).toContainText('v')
     await expect(page.getByTestId('donate-button')).toBeVisible()
 
-    // 单人练习：明确标注"开发中"，点击给出说明弹层
-    await expect(page.getByTestId('entry-pve')).toContainText('开发中')
+    // 单人练习：不再是"开发中"占位，点击进入设置页
+    await expect(page.getByTestId('entry-pve')).not.toContainText('开发中')
     await page.getByTestId('entry-pve').click()
-    await expect(page.getByTestId('pve-dialog')).toBeVisible()
-    await expect(page.getByTestId('pve-dialog')).toContainText('AI 对手')
-    await page.getByTestId('pve-dialog').getByRole('button', { name: '知道了' }).click()
-    await expect(page.getByTestId('pve-dialog')).toHaveCount(0)
+    await expect(page.getByTestId('pve-setup')).toBeVisible()
+    await expect(page.getByTestId('pve-start')).toBeVisible()
+    await expect(page.getByTestId('pve-difficulty-easy')).toBeVisible()
+    await expect(page.getByTestId('pve-difficulty-normal')).toBeVisible()
+    await page.getByTestId('back-home').click()
+    await expect(page.getByTestId('entry-online')).toBeVisible()
 
     // 规则速查
     await page.getByTestId('entry-rules').click()

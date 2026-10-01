@@ -52,4 +52,39 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
     await waitForHost(page)
     await expect(page.getByTestId('transport-label')).toHaveCount(0)
   })
+
+  test('生产构建可以离线开一局单人练习（不依赖任何网络）', async ({ page }) => {
+    const requests: string[] = []
+    page.on('request', (req) => requests.push(req.url()))
+
+    // ?debug=1 是生产构建里也可用的调试开关（GameScreen 显式支持）
+    await page.goto('/?debug=1')
+    await page.getByTestId('entry-pve').click()
+    await expect(page.getByTestId('pve-setup')).toBeVisible()
+    await page.getByTestId('pve-start').click()
+
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+    await expect(page.getByTestId('pve-badge')).toBeVisible()
+    await expect(page.getByTestId('entry-online')).toHaveCount(0)
+
+    // AI 已自动完成部署：棋盘上应同时存在两方的部队
+    const state = await page.evaluate(() =>
+      (
+        globalThis as unknown as {
+          __atGame?: { getState: () => { players: string[]; units: Array<{ owner: string }> } }
+        }
+      ).__atGame?.getState(),
+    )
+    expect(state?.players).toHaveLength(2)
+    const owners = new Set((state?.units ?? []).map((u) => u.owner))
+    expect(owners.size).toBe(2)
+
+    // 纯离线：全程只应加载同源资源，不该有任何外部请求（信令/字体/CDN）
+    const external = requests.filter((url) => {
+      if (url.startsWith('data:')) return false
+      if (url.includes('/favicon')) return false
+      return !url.startsWith('http://127.0.0.1:4173')
+    })
+    expect(external).toEqual([])
+  })
 })

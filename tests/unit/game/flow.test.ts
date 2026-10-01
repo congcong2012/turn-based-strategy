@@ -235,6 +235,32 @@ describe('占领与经济', () => {
     expect(s.units.some((u) => u.type === 'spear')).toBe(false)
   })
 
+  it('回归：地图边缘的兵营出场时不会越界崩溃', () => {
+    // bk-B 位于 (6,0)，y=0 就是地图上边缘：出兵位候选里的 (6,-1) 越界。
+    // 旧版 startTurn 直接调 moveCost → terrainAt 抛错（"越界: 6,-1"），整局崩掉。
+    let s = playing()
+    s = must(run(s, P1, { type: 'endTurn' }, data)) // 轮到 B
+    s.funds[P2] = 10000
+
+    s = must(run(s, P2, { type: 'produce', buildingId: 'bk-B', unitType: 'sword' }, data))
+    s = must(run(s, P2, { type: 'produce', buildingId: 'bk-B', unitType: 'sword' }, data))
+    s = must(run(s, P2, { type: 'endTurn' }, data)) // 轮到 A
+    s = must(run(s, P1, { type: 'endTurn' }, data)) // 回到 B：出场结算
+
+    // 两单都要落地，且都必须在界内
+    expect(s.pending).toHaveLength(0)
+    const spawned = s.units.filter((u) => u.type === 'sword' && u.owner === P2)
+    for (const u of spawned) {
+      expect(u.x).toBeGreaterThanOrEqual(0)
+      expect(u.y).toBeGreaterThanOrEqual(0)
+      expect(u.x).toBeLessThan(8)
+      expect(u.y).toBeLessThan(8)
+    }
+    // 兵营格 (6,0) 优先；第二单落到右侧相邻的 (7,0)（正上方 (6,-1) 越界被跳过）
+    expect(s.units.some((u) => u.x === 6 && u.y === 0)).toBe(true)
+    expect(s.units.some((u) => u.x === 7 && u.y === 0)).toBe(true)
+  })
+
   it('经济与资金不足校验', () => {
     let s = playing()
     s.funds[P1] = 100

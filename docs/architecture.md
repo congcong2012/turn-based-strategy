@@ -290,21 +290,81 @@ Trystero 的 `password` 参与 SDP 密钥派生（`genKey`）**并且**参与握
 
 回归测试：`tests/unit/hostElection.test.ts`（hostHello 先到的裁决）、
 `tests/unit/roomSession.test.ts`（leave 期间完成的 join 不得复活、继承房间也能收敛为客户端）、
-`tests/e2e/p2p.spec.ts`（真实网络下刷新重连，修复后从"60 秒超时失败"变成 13 秒通过）。
+`tests/e2e/p2p.spec.ts`（真实网络下真实刷新重连，修复后从"60 秒超时失败"变成 13 秒通过）。
+
+### ADR-20：单人练习（PVE）= 纯前端本地会话，不引入任何网络与后端（v1.2.0）
+
+**决策**：PVE 不走 `roomSession`/`Transport`，而是新增 `src/app/pveSession.ts` —— 它自己持有
+`GameState`、自己调 `applyCommand`，并对外产出**与联机同形状的 `RoomView`**。
+
+**为什么不是"复用 roomSession + 内存传输"**：那条路会把大厅阶段、3 秒房主选举等待、
+"≥2 人才能开始"的校验一起带进来，与"单人、点开就玩、零网络"的产品定义相冲突。
+而 `RoomView` 只是 UI 契约，用本地会话直接产出它，成本很低、收益是**棋盘与交互 100% 复用**。
+
+**权威模型不变**：人类指令与 AI 指令都经 `applyCommand`，两侧跑同一份规则代码，
+所以 PVE 不产生"第二套规则"。房主权威在这里退化为"本机即权威"，语义一致。
+
+**不做存档**：联机持久化是为了"房主刷新后给对手补发快照"；单人没有对端，刷新即结束更简单，
+也避免把"刷新后恢复 AI 回合"这套状态机塞进 `gameStore`。
+
+**会话只在 `start()` 时创建**（不是挂载时），因此 React StrictMode 的双挂载不会凭空开一局。
+
+### ADR-21：合法指令枚举 + 贪心 AI（用"免克隆打分"绕开深克隆的 O(n²)）
+
+**约束**：`applyCommand` 每次调用都 `JSON.parse(JSON.stringify(state))` 深克隆整个状态。
+若 AI 对每个候选都 apply 一次来做 1-ply 搜索，代价是「候选数 × 深克隆」，
+在 24×24、每方数个单位的局面下会明显拖慢回合。
+
+**做法**：
+1. `src/game/legalCommands.ts` 提供 `legalCommandsFor(state, playerId)`，**校验逻辑与
+   `commands.ts` 一一对应**，并用单测守住核心不变量：*枚举出的每一条指令都必须被 `applyCommand` 接受*；
+2. `src/ai/index.ts` 的候选打分是**纯读启发式**（`computeDamage` / `chebyshevDistance` / `distanceToHq`），
+   **只有最终选中的那一条**才 `applyCommand`；
+3. "普通"难度额外对启发式 top-K（K≤5）做一步前瞻（`evaluate(after) - evaluate(before)`），
+   用一个很小的 K 换取明显的棋力提升；
+4. 每回合设 `MAX_AI_STEPS` 上限 + 兜底 `endTurn`，**保证必然终止**；AI 永不 `resign`。
+
+**难度差异**：`easy` 在 top-3 里带噪随机、约 25% 概率跳过单位动作、部署随意；
+`normal` 完整贪心 + 攻击前瞻 + 按计划部署。
+
+**随机性边界**：内核保持**零随机**（战斗完全确定）；随机只存在于 `src/ai/rng.ts`（mulberry32），
+种子来自 `PveConfig.seed`，因此同种子必然复现（已有单测）。
+
+**顺带修掉的一个内核缺陷**：`startTurn` 的生产出场在评估"兵营四邻"时没有做边界检查，
+而 `moveCost → terrainAt` 对越界坐标**是抛错而不是返回 null** —— 于是一旦某座兵营位于地图边缘
+（如测试夹具里的 `bk-B(6,0)`）且本回合要出第二个兵，整局会崩在 `越界: 6,-1`。
+官方地图的兵营恰好都不在边缘，所以一直没暴露。已加边界判断，并在 `tests/unit/game/flow.test.ts`
+补了回归用例。
+
+### ADR-22：`GameScreen` 用 `mode` 门控复用，而不是为单人写第二套界面
+
+单人局要的棋盘、选中逻辑、移动/攻击高亮、生产面板、战报，与联机**完全一样**；
+只有少数片段是联机专属。因此给 `GameScreen` 加 `mode?: 'online' | 'pve'`（默认 `'online'`），
+在 `pve` 下隐藏：连接徽章、房间号、暂停横幅、连接帮助、掉线提示、诊断面板，
+并把"等待对手…"改成"等待 AI…"、结算遮罩从"返回大厅"改成"再来一局 / 返回主页"。
+
+**关键约束**：`mode === 'online'` 时行为**逐字节不变**，由既有 E2E
+（`game` / `reconnect` / `multiplayer` / `connection-status` / `release`）把关。
+
+**路由优先级**：`App.tsx` 的顺序是「单人局 > 联机对局 > 单人设置 > 规则 > 主页 > 大厅」。
+单人局排在联机对局之前，因此**不需要**先 `leave()` 联机会话 —— 它永远抢不到渲染权。
 
 ## 2. 模块分层
 
 ```
 src/
-├─ main.tsx / App.tsx            入口与外壳（按路由选页：对局 > 规则 > 主页 > 大厅）
+├─ main.tsx / App.tsx            入口与外壳（按路由选页：单人局 > 对局 > 单人设置 > 规则 > 主页 > 大厅）
 ├─ version.ts                    构建期注入的版本信息（页脚 / 诊断面板共用）
 ├─ ui/                           纯展示 + 事件回调
-│  ├─ HomePage.tsx               主页（联机对战 / 单人练习-预留 / 规则速查）+ PVE 说明弹层
+│  ├─ HomePage.tsx               主页（联机对战 / 单人练习 / 规则速查）
+│  ├─ PveSetup.tsx               单人练习设置页（对手数量 / 我的阵营 / 难度）
 │  ├─ RulesPanel.tsx             规则速查（全部由 src/data/*.json 渲染）
 │  ├─ AppFooter.tsx              页脚：版本号 + 规则入口 + 捐赠入口
 │  ├─ DonateDialog.tsx           捐赠弹层（静态收款码图片）
 │  └─ Lobby / PlayerList / ManualSdpPanel / GameScreen / BoardCanvas ...
-├─ hooks/useRoom.ts              React 绑定：身份解析、会话创建、生命周期串行化
+├─ hooks/
+│  ├─ useRoom.ts                 React 绑定：身份解析、会话创建、生命周期串行化
+│  └─ usePveGame.ts              单人绑定：把本地会话包装成同形状的 { view, actions }
 ├─ game/                         纯规则内核（无 React / 无渲染 / 可纯单测）
 │  ├─ types.ts                   GameState / Unit / Command / ErrorCode / GameEvent
 │  ├─ data.ts                    加载并索引 src/data/*.json
@@ -312,8 +372,14 @@ src/
 │  ├─ movement.ts                Dijkstra 可达范围 / 路径 / 射程
 │  ├─ combat.ts                  确定性伤害公式与反击判定
 │  ├─ state.ts                   回合状态机（START/RESOLVE/HANDOVER）、经济、胜负、计分
-│  ├─ commands.ts                指令校验与执行（房主权威的唯一入口）
+│  ├─ commands.ts                指令校验与执行（权威的唯一入口）
+│  ├─ legalCommands.ts           ★ 合法指令枚举（AI 的候选集；校验与 commands 一一对应）
+│  ├─ journal.ts                 战报/事件累积器（联机与单人共用）
 │  └─ logText.ts                 事件 → 中文战报（纯函数）
+├─ ai/                           本地 AI（纯函数：状态 → 下一条 Command）
+│  ├─ rng.ts                     确定性 PRNG（随机只存在于 AI 层，内核保持零随机）
+│  ├─ evaluate.ts                局面评估（材料 / 据点 / 王城威胁 / 资金）
+│  └─ index.ts                   nextCommand：贪心 + 一步前瞻，两档难度
 ├─ render/
 │  └─ boardApp.ts                PixiJS 棋盘渲染 + 相机 + 点击换算
 ├─ data/                         数据驱动：units/terrain/buildings/matchup/rules/maps/*.json
@@ -325,14 +391,16 @@ src/
 │  ├─ gameStore.ts               房主侧对局持久化（断线重连）
 │  └─ roomSession.ts             ★ 房间状态机：选举 + 权威名单 + 协议编排（无 React 依赖）
 └─ app/
-   ├─ route.ts                   极简路由（query/hash）→ 主页 / 大厅 / 规则页
+   ├─ route.ts                   极简路由（query/hash）→ 主页 / 大厅 / 规则页 / 单人练习
+   ├─ pveSession.ts              ★ 单人会话：本地持有 GameState 并驱动 AI，产出 RoomView
    ├─ roomCode.ts                房间码归一化 / 校验 / 随机生成
    ├─ identity.ts                playerId、昵称、URL 房间码与房间密码、本标签页房间记忆
    ├─ hostElection.ts            房主选举纯函数
    └─ lobbyReducer.ts            大厅名单归约纯函数
 ```
 
-数据流：`Transport 事件 → roomSession →（纯函数）hostElection / lobbyReducer → RoomView → React`。
+数据流（联机）：`Transport 事件 → roomSession →（纯函数）hostElection / lobbyReducer → RoomView → React`。
+数据流（单人）：`pveSession →（纯函数）applyCommand / nextCommand → RoomView → React`，**全程不经网络**。
 
 ## 3. 踩坑记录（M1 最重要的一条）
 
@@ -379,7 +447,9 @@ Pixi 内部在未初始化的 Application 上调私有方法直接抛错，React
 | 手动直连不使用房间密码 | 该链路不经过信令 | UI 说明即可 |
 | 全量广播状态 | 4 人局状态仅几十 KB | 状态变大后再做增量补丁 |
 | 无观战 / 回放 | 数据已预留（种子 + 完整状态 + 指令流） | 见 docs/tasks.md 的 M8 待办 |
-| 单人练习（PVE）尚未实现 | 主页是**置灰占位**，点击给说明 | 纯前端 AI，不引入服务器 |
+| 单人练习（PVE）不做存档 | 刷新即结束本局（联机才需要"房主刷新后给对手补发"的持久化） | 可按需求用 `gameStore` 加一个合成 key |
+| PVE 为自由混战，无组队 | 内核没有"队伍"概念，胜负始终按个人判定 | 若要做 2v2 需在内核引入队伍与按队伍判胜 |
+| 3 人局会空出一角 | 3 方打四角图时，第 4 角的中立王城+兵营会被弃置，可被任意一方占领（+1800/回合），但**不会淘汰任何人** | 设置页已明确提示；如需完全对称需新增 3 人图 |
 
 ## 5. 成本与合规
 

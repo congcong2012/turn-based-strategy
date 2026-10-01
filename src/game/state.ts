@@ -76,6 +76,7 @@ export function startTurn(state: GameState, data: GameData = DATA): { state: Gam
     }
     const type = unitType(item.type, data)
     const occupied = (x: number, y: number) => s.units.some((u) => u.x === x && u.y === y)
+    const map = mapOf(s, data)
     const candidates = [
       { x: building.x, y: building.y },
       { x: building.x, y: building.y - 1 },
@@ -84,8 +85,11 @@ export function startTurn(state: GameState, data: GameData = DATA): { state: Gam
       { x: building.x - 1, y: building.y },
     ]
     const spot = candidates.find((c) => {
+      // 必须先做边界检查：位于地图边缘的兵营，其四邻会越界，
+      // 而 moveCost → terrainAt 对越界坐标是抛错而不是返回 null（旧版在这里会崩）。
+      if (c.x < 0 || c.y < 0 || c.x >= map.width || c.y >= map.height) return false
       if (occupied(c.x, c.y)) return false
-      return moveCost(mapOf(s, data), c.x, c.y, type.moveType, data) !== null
+      return moveCost(map, c.x, c.y, type.moveType, data) !== null
     })
     if (!spot) {
       remaining.push(item)

@@ -34,6 +34,15 @@ describe('路由解析（主页 / 大厅 / 规则）', () => {
     expect(parseRoute('?page=lobby', '').page).toBe('lobby')
   })
 
+  it('单人练习（PVE）：hash 与 query 两种写法都支持', () => {
+    expect(parseRoute('', '#/pve').page).toBe('pve')
+    expect(parseRoute('?page=pve', '').page).toBe('pve')
+    // hash 优先，且不影响邀请信息解析
+    const invited = parseRoute('?room=AB23CD&page=pve', '#/home')
+    expect(invited.page).toBe('home')
+    expect(invited.roomCode).toBe('AB23CD')
+  })
+
   it('hash 优先于 query：从 ?page=lobby 进大厅后点"返回主页"必须真的回主页', () => {
     expect(parseRoute('?page=lobby', '#/home').page).toBe('home')
     expect(parseRoute('?page=rules', '#/lobby').page).toBe('lobby')

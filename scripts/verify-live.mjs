@@ -61,13 +61,18 @@ try {
   const version = (await pageA.locator('[data-testid=version-line]').innerText()).trim()
   check('页脚显示版本号', /v\d+\.\d+\.\d+/.test(version), version.slice(0, 60))
 
-  // ---------- 2. PVE 占位 ----------
+  // ---------- 2. 单人练习（PVE，纯离线） ----------
   await pageA.locator('[data-testid=entry-pve]').click()
-  await pageA.waitForSelector('[data-testid=pve-dialog]', { timeout: 10000 })
-  const pveText = await pageA.locator('[data-testid=pve-dialog]').innerText()
-  check('单人练习是"开发中"占位且有说明弹层', pveText.includes('开发中'))
-  await pageA.locator('[data-testid=pve-dialog]').getByRole('button', { name: '知道了' }).click()
-  await pageA.waitForSelector('[data-testid=pve-dialog]', { state: 'detached', timeout: 10000 })
+  await pageA.waitForSelector('[data-testid=pve-setup]', { timeout: 10000 })
+  check('单人练习进入设置页（不再是"开发中"占位）', await pageA.locator('[data-testid=pve-start]').isVisible())
+  check('设置页可选难度', await pageA.locator('[data-testid=pve-difficulty-normal]').isVisible())
+  await pageA.locator('[data-testid=pve-start]').click()
+  await pageA.waitForSelector('[data-testid=phase-label]', { timeout: 15000 })
+  const pvePhase = (await pageA.locator('[data-testid=phase-label]').innerText()).trim()
+  check('单人练习本地开局（进入部署阶段）', pvePhase.includes('部署'), pvePhase)
+  await pageA.locator('[data-testid=leave-button]').click()
+  await pageA.waitForSelector('[data-testid=entry-online]', { timeout: 10000 })
+  check('退出单人局回到主页', await pageA.locator('[data-testid=entry-online]').isVisible())
 
   // ---------- 3. 规则速查 ----------
   await pageA.locator('[data-testid=entry-rules]').click()
