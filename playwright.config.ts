@@ -12,13 +12,13 @@ export default defineConfig({
   reporter: [['list']],
   webServer: [
     {
-      command: 'pnpm vite --port 5173 --strictPort',
+      command: 'npx vite --port 5173 --strictPort',
       url: DEV_URL,
       reuseExistingServer: true,
       timeout: 90_000,
     },
     {
-      command: 'pnpm vite preview --port 4173 --strictPort',
+      command: 'npx vite preview --port 4173 --strictPort',
       url: PREVIEW_URL,
       reuseExistingServer: true,
       timeout: 90_000,
