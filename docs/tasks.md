@@ -253,8 +253,10 @@
 - [x] **合法指令枚举**（`src/game/legalCommands.ts`）：`legalCommandsFor(state, playerId)`，校验与 `commands.ts` 一一对应；
       单测守住核心不变量——枚举出的**每一条**指令都必须被 `applyCommand` 接受
 - [x] **AI 决策**（`src/ai/`）：`rng.ts`（确定性 PRNG；内核保持零随机）、`evaluate.ts`（局面评估）、
-      `index.ts`（贪心 + 一步前瞻；`easy` / `normal` 两档难度）
+      `index.ts`（贪心 + 一步前瞻 + `PROFILES` 难度策略表；`easy` / `normal` / `hard` 三档）
 - [x] **本地会话**（`src/app/pveSession.ts`）：自己持有 GameState、驱动 AI，产出与联机**同形状**的 `RoomView`，不注入 Transport
+- [x] **对局存档**（`src/app/pveStore.ts`）：localStorage 单槽存 `config（含种子）+ state + journal`；
+      `#/pve` 自动恢复，只有「退出对局」清档。**AI 随机数改为无状态派生**，刷新前后逐帧一致（见 architecture ADR-23）
 - [x] **共用战报**（`src/game/journal.ts`）：从 roomSession 抽出，联机与单人共用同一份实现（文案与裁剪语义一致）
 - [x] **UI**：`PveSetup.tsx` 设置页（对手数量 / 我的阵营 / 难度）、`usePveGame.ts` 接线、
       `GameScreen` 加 `mode` 门控复用棋盘与交互、`route.ts` 新增 `pve` 页
@@ -267,7 +269,15 @@
 | E2E（local） | ✅ 34 passed（其中 PVE 新增 5 条：设置页 / 开局部署 / AI 真的会行动 / 认输结算与再来一局 / 3 个 AI 四人图） |
 | 生产构建 | ✅ 用真实 dist 产物核验：可离线开局、AI 自动部署并行动、**全程零外部请求**、无页面错误 |
 
-已知取舍：3 方打四角图会空出第 4 角（该角王城/兵营变中立，占领可得 +1800/回合但不淘汰任何人）；PVE 不做存档、不做组队。
+> M9 追加的验收（对局存档、困难难度、CI 阻塞门）见 CHANGELOG 的 `[未发布]` 段落。
+
+已知取舍：3 方打四角图会空出第 4 角（该角王城/兵营变中立，占领可得 +1800/回合但不淘汰任何人）；
+PVE 不做组队（内核没有队伍概念）；存档为**单槽**，两个标签页同时开可能互相覆盖。
+
+## M9 · PVE 体验补强（进行中）
+
+- [x] **对局存档 + 刷新/重开标签页自动恢复**（`src/app/pveStore.ts` + `usePveGame` 的恢复路径）
+- [x] **困难难度**（`PROFILES.hard`：前瞻候选 5 → 12 + 集火残血 + 轻度抱团；实测全胜普通）
 
 ## M8 · 待办（按价值排序）
 
@@ -287,19 +297,24 @@ npm run preview          # 预览生产构建（http://127.0.0.1:4173）
 npm run e2e:local        # 本地传输 E2E（无需网络）
 npm run e2e:p2p          # 真实 P2P E2E（需要公网信令）
 npm run e2e              # 全部 E2E（local / mobile / preview / p2p / manual 五条轨道）
+npm run e2e:ci           # CI 的阻塞门：local + mobile + preview 的离线部分（--grep-invert @network）
 ```
 
 > 首次运行 E2E 需要 `npx playwright install chromium`（约 170MB）。
-> CI 只跑单元测试 + 构建；E2E 作为本地质量门（真实 P2P 依赖公共信令，不适合放进部署流水线）。
 >
-> **发版前必须按 docs/release-checklist.md 全量走一遍**，并把结果记进 CHANGELOG.md。
+> **CI 跑哪些 E2E**：部署流水线里的 `e2e` job 跑 `local` + `mobile` + `preview` 三条轨道并**阻塞部署**
+> （失败则 `deploy` 被 skip）。其中 preview 里依赖公共 MQTT 信令的 2 条打了 `@network` 标记，
+> 从阻塞门里排除、另以非阻塞步骤运行 —— 覆盖还在，但公共信令抖动不会卡住上线。
+> `p2p` / `manual` 仍留在本地发版清单（真实 WebRTC 打洞在 runner 上不可靠）。
+>
+> **发版前必须按 docs/release-checklist.md 全量走一遍**（本地要把 5 条轨道都跑满），并把结果记进 CHANGELOG.md。
 
 ## GitHub Pages 部署清单
 
 1. **仓库 Settings → Pages → Build and deployment → Source 必须选 `GitHub Actions`**
    （若选的是「Deploy from a branch」，Pages 会把仓库根目录当站点，直接返回源码版 index.html → 白屏）；
-2. 推送到 `main` 或 `master` 会自动触发 `.github/workflows/deploy.yml`（也可手动 Run workflow）；
-3. 工作流会跑单元测试 → `npm run build` → 上传 `dist/` → 发布到 `https://<user>.github.io/<repo>/`；
+2. 推送到 `main` / `master` / `workbuddy-edition` 会自动触发 `.github/workflows/deploy.yml`（也可手动 Run workflow）；
+3. 工作流会跑单元测试 → `npm run build` → 上传 `dist/` → **`e2e` job 跑三条 E2E 轨道（阻塞门）** → 发布到 `https://<user>.github.io/<repo>/`；
 4. 本地可先自检子路径是否正常（复现线上环境）：
 
    ```bash

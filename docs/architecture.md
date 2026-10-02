@@ -304,8 +304,10 @@ Trystero 的 `password` 参与 SDP 密钥派生（`genKey`）**并且**参与握
 **权威模型不变**：人类指令与 AI 指令都经 `applyCommand`，两侧跑同一份规则代码，
 所以 PVE 不产生"第二套规则"。房主权威在这里退化为"本机即权威"，语义一致。
 
-**不做存档**：联机持久化是为了"房主刷新后给对手补发快照"；单人没有对端，刷新即结束更简单，
-也避免把"刷新后恢复 AI 回合"这套状态机塞进 `gameStore`。
+**对局存档（ADR-23）**：单人局会落盘到 localStorage（`src/app/pveStore.ts`，单槽）。
+联机持久化是为了"房主刷新后给对手补发快照"；单人虽然没对端，但**刷新即丢整局**体验太差 ——
+所以用一个独立 store 存 `config（含种子）+ state + journal`，进 `#/pve` 时自动恢复。
+关键约束与联机一致：**只有"退出对局"才清档**，刷新 / 关标签页不清。
 
 **会话只在 `start()` 时创建**（不是挂载时），因此 React StrictMode 的双挂载不会凭空开一局。
 
@@ -324,8 +326,12 @@ Trystero 的 `password` 参与 SDP 密钥派生（`genKey`）**并且**参与握
    用一个很小的 K 换取明显的棋力提升；
 4. 每回合设 `MAX_AI_STEPS` 上限 + 兜底 `endTurn`，**保证必然终止**；AI 永不 `resign`。
 
-**难度差异**：`easy` 在 top-3 里带噪随机、约 25% 概率跳过单位动作、部署随意；
-`normal` 完整贪心 + 攻击前瞻 + 按计划部署。
+**难度差异**：三档由 `src/ai/index.ts` 的 `PROFILES` 策略表描述 ——
+`easy` 在 top-3 里带噪随机、约 25% 概率跳过单位动作、部署随意；
+`normal` 完整贪心 + 攻击前瞻（top-5 一步前瞻）+ 按计划部署；
+`hard` 用同一套单步前瞻但候选放宽到 top-12，并提高集火权重、加入轻度抱团。
+**实测**：普通 vs 困难（4 seed × 双方互换）困难全胜；其中"候选 5 → 12"是决定性因素，
+集火与抱团只改变走法风格。曾试过"第二步：扣掉对手回手威胁"，反而退回 50%（过度保守），已放弃。
 
 **随机性边界**：内核保持**零随机**（战斗完全确定）；随机只存在于 `src/ai/rng.ts`（mulberry32），
 种子来自 `PveConfig.seed`，因此同种子必然复现（已有单测）。
@@ -348,6 +354,31 @@ Trystero 的 `password` 参与 SDP 密钥派生（`genKey`）**并且**参与握
 
 **路由优先级**：`App.tsx` 的顺序是「单人局 > 联机对局 > 单人设置 > 规则 > 主页 > 大厅」。
 单人局排在联机对局之前，因此**不需要**先 `leave()` 联机会话 —— 它永远抢不到渲染权。
+
+### ADR-23：单人对局持久化（独立 store + 无状态 RNG + 恢复时重排 AI）
+
+**决策**：新增 `src/app/pveStore.ts`（localStorage 单槽，键 `ancient-tactics.pve`），
+存 `{ version, savedAt, config, state, journal }`；**不扩 `gameStore`** —— 后者语义是"每房一份房主快照"，
+而单人是一份配置 + 状态 + 战报，混在一起只会让两边的校验互相牵制。
+
+**三个必须踩过才知道的坑**：
+
+1. **AI 随机数必须改成"无状态派生"**。原先 `mulberry32(config.seed)` 只在开局建一次、整局复用，
+   内部游标没法序列化 —— 刷新恢复后 AI 会从随机数序列头部重来，走出与刷新前不同的分支。
+   现在每次决策现算 `mulberry32(hashSeed(seed, state.rev, state.turnSeq, state.turnIndex, playerId, difficulty))`：
+   同一个 `(种子, 局面)` 必然给出同一个决策，刷新前后逐帧一致，且不依赖任何携带状态。
+2. **`setTimeout` 活不过刷新**：恢复时必须重排 AI 链（`resumeScheduling()`），
+   否则会卡在"轮到 AI 但没人动"的假死状态。
+3. **React StrictMode 的双挂载**：会话本来"只在 `start()` 创建"就是为了避开它；
+   恢复路径改成"挂载时读一次存档并创建会话"，靠既有的 `useEffect(() => disposeSession)` 自然收敛 ——
+   **不要**用一次性 ref 守卫，那会和 dispose 打架，导致 `sessionRef` 被清空后不再重建。
+
+**落盘策略**：人类指令与系统事件立即写；AI 步进做 250ms 尾部节流 + `pagehide` 补写。
+之所以敢节流：AI 决策是"状态的纯函数"，丢掉尾部几步会在恢复后被逐帧重放出来。
+**终局不落盘**（发 `'ended'` 让上层清档），与联机侧 `maybeRestoreGame` 拒绝 `GAME_OVER` 的取舍一致，
+免得下次进 `#/pve` 停在旧的结算页。
+
+**已知限制**：两个标签页同时打开会互相覆盖存档、各跑一份 AI（可能发散）。本次不做跨标签选举。
 
 ## 2. 模块分层
 
@@ -379,7 +410,7 @@ src/
 ├─ ai/                           本地 AI（纯函数：状态 → 下一条 Command）
 │  ├─ rng.ts                     确定性 PRNG（随机只存在于 AI 层，内核保持零随机）
 │  ├─ evaluate.ts                局面评估（材料 / 据点 / 王城威胁 / 资金）
-│  └─ index.ts                   nextCommand：贪心 + 一步前瞻，两档难度
+│  └─ index.ts                   nextCommand：按 PROFILES 策略表分档（easy / normal / hard）
 ├─ render/
 │  └─ boardApp.ts                PixiJS 棋盘渲染 + 相机 + 点击换算
 ├─ data/                         数据驱动：units/terrain/buildings/matchup/rules/maps/*.json
@@ -393,6 +424,7 @@ src/
 └─ app/
    ├─ route.ts                   极简路由（query/hash）→ 主页 / 大厅 / 规则页 / 单人练习
    ├─ pveSession.ts              ★ 单人会话：本地持有 GameState 并驱动 AI，产出 RoomView
+   ├─ pveStore.ts                单人对局存档（localStorage 单槽）：刷新 / 重开标签页自动恢复
    ├─ roomCode.ts                房间码归一化 / 校验 / 随机生成
    ├─ identity.ts                playerId、昵称、URL 房间码与房间密码、本标签页房间记忆
    ├─ hostElection.ts            房主选举纯函数
@@ -447,7 +479,7 @@ Pixi 内部在未初始化的 Application 上调私有方法直接抛错，React
 | 手动直连不使用房间密码 | 该链路不经过信令 | UI 说明即可 |
 | 全量广播状态 | 4 人局状态仅几十 KB | 状态变大后再做增量补丁 |
 | 无观战 / 回放 | 数据已预留（种子 + 完整状态 + 指令流） | 见 docs/tasks.md 的 M8 待办 |
-| 单人练习（PVE）不做存档 | 刷新即结束本局（联机才需要"房主刷新后给对手补发"的持久化） | 可按需求用 `gameStore` 加一个合成 key |
+| 单人对局刷新后自动恢复 | 存档在 localStorage 单槽；**只有"退出对局"才清**；终局不落盘 | 见 ADR-23；两个标签页同时开可能互相覆盖，未做跨标签选举 |
 | PVE 为自由混战，无组队 | 内核没有"队伍"概念，胜负始终按个人判定 | 若要做 2v2 需在内核引入队伍与按队伍判胜 |
 | 3 人局会空出一角 | 3 方打四角图时，第 4 角的中立王城+兵营会被弃置，可被任意一方占领（+1800/回合），但**不会淘汰任何人** | 设置页已明确提示；如需完全对称需新增 3 人图 |
 

@@ -5,6 +5,60 @@
 
 发版流程见 docs/release-checklist.md（每次发版照做，不许跳步）。
 
+## [未发布]
+
+### 新增
+
+- **单人对局存档 + 刷新/重开标签页自动恢复**：单人局会落盘到浏览器本地（`src/app/pveStore.ts`，
+  localStorage 单槽，键 `ancient-tactics.pve`），存**配置（含种子）+ 对局状态 + 战报**。
+  刷新页面或关掉标签页再回来，进「单人练习」直接**接着上一局继续打**；只有点「退出对局」才清档。
+  打完之后刷新会回到设置页（终局不落盘），不会停在旧结算界面上。
+- **困难难度 AI**：在 简单 / 普通 之上新增「困难」，设置页第三档。
+  做法是把单步前瞻的候选从 top-5 **放宽到 top-12**，并提高集火残血权重、加入轻度抱团走位。
+  **实测**（普通 vs 困难，4 个种子 × 双方互换共 8 局）困难**全胜**；其中"候选 5 → 12"是决定性因素，
+  集火与抱团只改变走法风格、不影响胜负。
+- **CI 部署质量门**：部署流水线新增 `e2e` job，跑 `local` + `mobile` + `preview` 三条轨道，
+  **失败则不部署**（`deploy` 需要 `build` 与 `e2e` 同时成功）。
+  preview 里依赖公共 MQTT 信令的 2 条用例打了 `@network` 标记，从阻塞门排除、另以非阻塞步骤运行 ——
+  覆盖还在，但公共信令抖动不会卡住上线。
+
+### 变更（AI）
+
+- **单人局里 AI 的随机数改成"无状态派生"**。原先 `mulberry32(seed)` 只在开局建一次、整局复用，
+  内部游标没法序列化 —— 刷新恢复后 AI 会从随机数序列头部重来，走出与刷新前不同的分支。
+  现在每次决策现算 `mulberry32(hashSeed(seed, state.rev, state.turnSeq, state.turnIndex, playerId, difficulty))`，
+  同一个 `(种子, 局面)` 必然给出同一个决策，刷新前后逐帧一致。
+  副作用是"简单"难度在不同种子下会打出不同的对局长度（少数种子会打得更久）。
+- 三档难度收敛成一张 `PROFILES` 策略表（原来散落的 `difficulty === 'easy' ? ... : ...` 二元分支）。
+  **`easy` / `normal` 的参数取值与改动前逐字一致**，因此既有行为与既有单测都不受影响。
+- 试过并**放弃**的做法：困难档的"第二步：扣掉对手回手的威胁"。实测反而退回 50% 胜率（过度保守），
+  已从代码里移除，理由记在 `docs/architecture.md` 的 ADR-21 里。
+
+### 变更（构建 / CI）
+
+- `playwright.config.ts` 按 CI 区分：`retries: 2`、`forbidOnly`、`reuseExistingServer: !isCI`
+  （不再复用上一次中断留下的"半死"服务器）、失败时留 trace 与截图、CI 额外产出 HTML 报告。
+- CI 的 `e2e` job 会给 `dist` 走 `upload-artifact` / `download-artifact`，
+  保证 **E2E 跑的就是将要部署的同一份字节**；并缓存 `~/.cache/ms-playwright`（key 取 `pnpm-lock.yaml` 的哈希）。
+- 单元测试全局 `testTimeout` 提到 20s：套件里有"整局 AI 自对弈"级别的模拟，
+  单跑 2–3 秒、全量并行时超过 vitest 默认的 5 秒。
+
+### 验收记录（未发布）
+
+| 项 | 结果 |
+| --- | --- |
+| 静态检查 `tsc --noEmit` ×2 | ✅ 通过 |
+| 单元测试 | ✅ **230 passed**（26 个文件；新增 pveStore 13、pveSession 存档 7、AI 困难档 4） |
+| 生产构建 | ✅ 0 error |
+| E2E 阻塞门 `npm run e2e:ci` | ✅ 38 passed（local 34 + mobile 2 + preview 离线 2）※该次在 PVE/困难档改动**之前**跑的 |
+| E2E `local`（改动后，36 条） | ⚠️ 全 36 条跑完**未出现失败**，但运行被中断在汇总之前，没有留下 "36 passed" 的结论行 |
+| E2E `mobile` / `preview`（改动后） | ✅ 2 passed / 全 4 条（含 `@network` 2 条）passed |
+| E2E `p2p` / `manual` | ⏳ **改动后未复跑**（改动不涉及 `net/` 与传输层，但仍属未验） |
+
+> **因此本次不按正式版本发布**：`docs/release-checklist.md` 要求发版时 5 条轨道全绿，
+> 上面 `local` 的结论行与 `p2p` / `manual` 两条还缺。要发版请先在本机补跑：
+> `npm run e2e:local`、`npm run e2e:p2p`、`npm run e2e:manual`。
+
 ## [1.2.0] · 2026-10-02
 
 ### 新增
