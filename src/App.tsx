@@ -12,7 +12,8 @@ export default function App() {
   const { route, go } = useRoute()
   const { view, identity, actions, initialRoomCode, debug } = useRoom()
   // 单人模式：完全离线，不走 useRoom/transport
-  const pve = usePveGame({ onExit: () => go('home') })
+  // resumeWhen：只有落在 #/pve 时才尝试从存档恢复（刷新/重开标签页接着打）
+  const pve = usePveGame({ onExit: () => go('home'), resumeWhen: route.page === 'pve' })
 
   // 邀请链接里的房间码优先（老链接必须继续直达大厅）
   const roomCode = useMemo(() => route.roomCode ?? initialRoomCode, [route.roomCode, initialRoomCode])
@@ -21,6 +22,15 @@ export default function App() {
   // （这也是为什么单人模式不需要先 leave 联机会话 —— 它永远抢不到渲染权）
   if (pve.active && pve.view) {
     return <GameScreen view={pve.view} actions={pve.actions} mode="pve" onRestart={pve.restart} />
+  }
+
+  // 有存档正在恢复：先占位，避免闪一下设置页（存档是同步读的，所以这只是一帧的事）
+  if (pve.resuming) {
+    return (
+      <div className="app pve-setup" data-testid="pve-resuming">
+        <p className="muted">正在恢复上一局…</p>
+      </div>
+    )
   }
 
   // 对局优先：一旦开局，无论当前在哪一页都显示对局界面

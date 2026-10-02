@@ -2,8 +2,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { createPveSession, describePveMatch, normalizeConfig, PVE_HUMAN_ID } from '../../src/app/pveSession'
-import type { PveConfig, PveSession } from '../../src/app/pveSession'
+import type { PveConfig, PvePersistReason, PveSaveData, PveSession } from '../../src/app/pveSession'
 import { nextCommand } from '../../src/ai'
+import { currentPlayer } from '../../src/game/state'
 import type { GameState } from '../../src/game/types'
 import type { RoomView } from '../../src/net/roomSession'
 
@@ -199,3 +200,136 @@ describe('pveSession · 生命周期', () => {
     expect(seen.length).toBe(afterError) // dispose 后不再 emit
   })
 })
+
+// ------------------------------------------------------------------ 存档 / 恢复
+
+/** 人类一侧快速走完部署（与 playToEnd 同样的托管策略） */
+function finishDeploy(session: PveSession): void {
+  for (let i = 0; i < 10; i += 1) {
+    const game = session.getView().game as GameState
+    if (game.phase !== 'DEPLOY' || game.deploy['you'].done) break
+    session.sendCommand(nextCommand(game, 'you', 'normal'))
+  }
+  session.sendCommand({ type: 'deployDone' })
+}
+
+function trackingSession(config: PveConfig = baseConfig()) {
+  const seen: Array<{ data: PveSaveData; reason: PvePersistReason }> = []
+  const session = createPveSession({
+    config,
+    schedule: syncSchedule,
+    actionDelayMs: 0,
+    onPersist: (data, reason) => seen.push({ data, reason }),
+  })
+  return { session, seen }
+}
+
+describe('pveSession · 存档', () => {
+  it('构造后即以 system 落盘一次（部署阶段 AI 的那几步是 ai）', () => {
+    const { seen } = trackingSession(baseConfig({ opponents: 1, humanSeat: 1 }))
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen[seen.length - 1].reason).toBe('system')
+    const last = seen[seen.length - 1].data
+    expect(last.config.opponents).toBe(1)
+    expect(last.state.phase).toBe('DEPLOY')
+    expect(last.state.players).toEqual(['ai-0', 'you'])
+  })
+
+  it('人类指令以 human 落盘', () => {
+    const { session, seen } = trackingSession()
+    seen.length = 0
+    session.sendCommand({ type: 'deploy', unitType: 'sword', x: 2, y: 0 })
+    expect(seen.some((s) => s.reason === 'human')).toBe(true)
+  })
+
+  it('AI 步进以 ai 落盘（上层据此做尾部节流）', () => {
+    const { session, seen } = trackingSession()
+    finishDeploy(session)
+    seen.length = 0
+    session.sendCommand({ type: 'endTurn' }) // 交给 AI，同步跑完
+    expect(seen.filter((s) => s.reason === 'ai').length).toBeGreaterThan(0)
+  })
+
+  it('对局结束时报 ended（上层收到后会清档，而不是写档）', () => {
+    const { session, seen } = trackingSession()
+    session.sendCommand({ type: 'resign' })
+    expect(seen[seen.length - 1].reason).toBe('ended')
+    expect(seen[seen.length - 1].data.state.phase).toBe('GAME_OVER')
+  })
+
+  it('从存档恢复：局面与战报逐字一致', () => {
+    const { seen } = trackingSession(baseConfig({ opponents: 1, humanSeat: 1 }))
+    const snapshot = seen[seen.length - 1].data
+
+    const resumed = createPveSession({
+      restore: { config: snapshot.config, state: snapshot.state, journal: snapshot.journal },
+      schedule: syncSchedule,
+      actionDelayMs: 0,
+    })
+
+    expect(resumed.getView().game).toEqual(snapshot.state)
+    expect(resumed.getView().log).toEqual(snapshot.journal.log)
+    expect(resumed.getView().players).toHaveLength(2)
+  })
+
+  it('从存档恢复后能继续打到终局', () => {
+    const { seen } = trackingSession(baseConfig({ opponents: 1, humanSeat: 1 }))
+    const snapshot = seen[seen.length - 1].data
+
+    const resumed = createPveSession({
+      restore: { config: snapshot.config, state: snapshot.state, journal: snapshot.journal },
+      schedule: syncSchedule,
+      actionDelayMs: 0,
+    })
+    playToEnd(resumed)
+    expect((resumed.getView().game as GameState).phase).toBe('GAME_OVER')
+  })
+
+  it('存档停在 AI 的回合时，恢复后 AI 会自己继续走（setTimeout 不跨刷新）', () => {
+    const { session, seen } = trackingSession()
+    finishDeploy(session)
+    session.sendCommand({ type: 'endTurn' })
+
+    const midAi = seen.find(
+      (s) => s.reason === 'ai' && s.data.state.phase === 'PLAYING' && currentPlayer(s.data.state) !== 'you',
+    )
+    expect(midAi, '应当能抓到"轮到 AI"的中间存档').toBeTruthy()
+    const checkpoint = midAi!.data
+
+    const resumed = createPveSession({
+      restore: { config: checkpoint.config, state: checkpoint.state, journal: checkpoint.journal },
+      schedule: syncSchedule,
+      actionDelayMs: 0,
+    })
+    // 构造时 resumeScheduling 已经把 AI 推进一步以上
+    expect((resumed.getView().game as GameState).rev).toBeGreaterThan(checkpoint.state.rev)
+  })
+
+  it('既不给 config 也不给 restore 时直接报错', () => {
+    expect(() => createPveSession({ schedule: syncSchedule })).toThrow(/必须提供/)
+  })
+
+  it('恢复后 AI 行为可复现：同一份存档恢复两次，走出的局面一致', () => {
+    const { session, seen } = trackingSession(baseConfig())
+    finishDeploy(session)
+    session.sendCommand({ type: 'endTurn' })
+    const checkpoint = seen[seen.length - 1].data
+
+    const restore = () =>
+      createPveSession({
+        restore: { config: checkpoint.config, state: checkpoint.state, journal: checkpoint.journal },
+        schedule: syncSchedule,
+        actionDelayMs: 0,
+      })
+    const a = playToEndWith(restore())
+    const b = playToEndWith(restore())
+    expect(a).toEqual(b)
+  })
+})
+
+/** 把一局托管打完，返回终局的 winner（用于对比两次恢复的结果） */
+function playToEndWith(session: PveSession): { winner: string | null; round: number } {
+  playToEnd(session)
+  const game = session.getView().game as GameState
+  return { winner: game.winner, round: game.round }
+}

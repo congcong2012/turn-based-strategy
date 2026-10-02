@@ -39,5 +39,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/unit/**/*.test.ts'],
+    // 套件里有"整局 AI 自对弈"级别的模拟（pveSession / ai 的完整对局用例），
+    // 单跑约 2–3 秒，在 CI 或全量并行时会超过默认的 5 秒。给一个仍然能抓住"卡死"的上限。
+    testTimeout: 20_000,
   },
 })

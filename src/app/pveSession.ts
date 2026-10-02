@@ -16,9 +16,10 @@ import { createGame, currentPlayer } from '../game/state'
 import { applyCommand } from '../game/commands'
 import { describeErrorCode } from '../game/errorText'
 import { appendJournal, emptyJournal } from '../game/journal'
+import type { Journal } from '../game/journal'
 import { nextCommand, MAX_AI_STEPS } from '../ai'
 import type { Difficulty } from '../ai'
-import { mulberry32 } from '../ai/rng'
+import { hashSeed, mulberry32 } from '../ai/rng'
 import type { Command, GameState, PlayerId } from '../game/types'
 import type { LobbyPlayer, RoomRole, SignalStrategy, TransportKind, TransportStatus } from '../net/types'
 import type { ConnectionState } from '../net/connectionState'
@@ -32,7 +33,7 @@ export interface PveConfig {
   /** 人类占据哪个出生角（0 起）。出生角序号**同时就是出手顺序**：0 号先手 */
   humanSeat: number
   difficulty: PveDifficulty
-  /** 随机种子：决定"简单"难度的行为，保证同种子可复现 */
+  /** 随机种子：简单难度据此抽随机数；普通 / 困难是确定性策略。同种子 + 同配置必然可复现 */
   seed: number
 }
 
@@ -51,8 +52,29 @@ const defaultScheduler: Scheduler = (fn, ms) => {
   return () => clearTimeout(handle)
 }
 
-export interface PveSessionOptions {
+/** 需要落盘的最小集合：配置（含种子）+ 对局状态 + 战报 */
+export interface PveSaveData {
   config: PveConfig
+  state: GameState
+  journal: Journal
+}
+
+/**
+ * 落盘原因：
+ *  - `human` / `ai`：一次成功指令（AI 的会由上层做尾部节流）
+ *  - `system`：会话初始化或重开一局
+ *  - `ended`：对局结束 —— 上层应当**清档**，免得下次进 #/pve 停在旧结算页
+ */
+export type PvePersistReason = 'human' | 'ai' | 'system' | 'ended'
+
+/** 从存档恢复所需的全部内容 */
+export type PveRestore = PveSaveData
+
+export interface PveSessionOptions {
+  /** 开新局用；与 `restore` 二选一 */
+  config?: PveConfig
+  /** 从存档恢复；与 `config` 二选一，优先级更高 */
+  restore?: PveRestore
   humanId?: string
   humanNickname?: string
   /** 覆盖 AI 昵称（按 AI 序号 0 起）；默认"电脑甲/乙/丙" */
@@ -62,6 +84,11 @@ export interface PveSessionOptions {
   /** 可注入的调度器：测试可传同步实现，从而不需要 await */
   schedule?: Scheduler
   onChange?: (view: RoomView) => void
+  /**
+   * 需要落盘时回调。会话本身**不碰 localStorage**（注入进来才可纯单测）；
+   * 节流与清档策略都由上层决定。
+   */
+  onPersist?: (data: PveSaveData, reason: PvePersistReason) => void
 }
 
 export interface PveSession {
@@ -106,10 +133,16 @@ export function createPveSession(options: PveSessionOptions): PveSession {
   const actionDelayMs = options.actionDelayMs ?? DEFAULT_ACTION_DELAY_MS
   const schedule = options.schedule ?? defaultScheduler
 
-  let config = normalizeConfig(options.config)
+  if (!options.config && !options.restore) {
+    throw new Error('createPveSession：必须提供 config（新开一局）或 restore（从存档恢复）')
+  }
+
+  let config = normalizeConfig(options.restore ? options.restore.config : (options.config as PveConfig))
   let match = describePveMatch(config, humanId)
-  let state: GameState = createGame(match.mapId, match.seatIds, data)
-  let journal = emptyJournal()
+  let state: GameState = options.restore
+    ? options.restore.state
+    : createGame(match.mapId, match.seatIds, data)
+  let journal: Journal = options.restore ? options.restore.journal : emptyJournal()
   let error: string | null = null
   let disposed = false
   let lastSignature = ''
@@ -215,8 +248,13 @@ export function createPveSession(options: PveSessionOptions): PveSession {
     options.onChange?.(view)
   }
 
+  /** 落盘（由上层做节流与清档） */
+  function persist(reason: PvePersistReason): void {
+    options.onPersist?.({ config, state, journal }, reason)
+  }
+
   /** 应用一条指令（AI 与人类共用）：保证 state 只在 ok 时才推进 */
-  function apply(playerId: PlayerId, cmd: Command): boolean {
+  function apply(playerId: PlayerId, cmd: Command, reason: PvePersistReason): boolean {
     const before = state
     const result = applyCommand(state, playerId, cmd, data)
     if (!result.ok) {
@@ -226,6 +264,8 @@ export function createPveSession(options: PveSessionOptions): PveSession {
     state = result.state
     journal = appendJournal(journal, result.events, before, state, nameOfPlayer)
     error = null
+    // 终局不落盘：上层收到 'ended' 会清档，免得下次进 #/pve 停在旧的结算页
+    persist(state.phase === 'GAME_OVER' ? 'ended' : reason)
     return true
   }
 
@@ -235,16 +275,23 @@ export function createPveSession(options: PveSessionOptions): PveSession {
     while (!disposed && state.phase === 'DEPLOY' && guard < 300) {
       const pendingSeat = match.aiSeats.find((s) => !state.deploy[s.id]?.done)
       if (!pendingSeat) break
-      const cmd = nextCommand(state, pendingSeat.id, config.difficulty, data, aiRng())
-      if (!apply(pendingSeat.id, cmd)) break
+      const cmd = nextCommand(state, pendingSeat.id, config.difficulty, data, aiRng(pendingSeat.id))
+      if (!apply(pendingSeat.id, cmd, 'ai')) break
       guard += 1
     }
   }
 
-  let aiRandom: (() => number) | null = null
-  function aiRng(): () => number {
-    if (aiRandom === null) aiRandom = mulberry32(config.seed)
-    return aiRandom
+  /**
+   * AI 的随机数：**无状态派生**，每次决策都按"种子 + 当前局面 + 谁在决策"现算一个生成器。
+   *
+   * 为什么不用"开局建一次、整局复用同一个生成器"：那种写法的内部游标没法序列化，
+   * 一旦刷新页面恢复对局，AI 会从随机数序列的头部重来，走出与刷新前不同的分支。
+   * 改成纯函数派生后，同一个 (种子, 局面) 必然得到同一个决策 —— 刷新前后逐帧一致。
+   */
+  function aiRng(playerId: PlayerId): () => number {
+    return mulberry32(
+      hashSeed(config.seed, state.rev, state.turnSeq, state.turnIndex, playerId, config.difficulty),
+    )
   }
 
   /** 行动阶段：AI 走一步，然后（若还轮到 AI）继续排程 */
@@ -280,16 +327,16 @@ export function createPveSession(options: PveSessionOptions): PveSession {
 
     if (aiSteps >= MAX_AI_STEPS) {
       // 兜底：绝不死循环，强制结束该 AI 的回合
-      apply(actor, { type: 'endTurn' })
+      apply(actor, { type: 'endTurn' }, 'ai')
       aiSteps = 0
       emit()
       scheduleAi()
       return
     }
 
-    const cmd = nextCommand(state, actor, config.difficulty, data, aiRng())
+    const cmd = nextCommand(state, actor, config.difficulty, data, aiRng(actor))
     aiSteps += 1
-    apply(actor, cmd)
+    apply(actor, cmd, 'ai')
     emit()
 
     if (cmd.type === 'endTurn' || phaseOf() === 'GAME_OVER') {
@@ -324,7 +371,7 @@ export function createPveSession(options: PveSessionOptions): PveSession {
   function sendCommand(cmd: Command): void {
     if (disposed) return
     if (state.phase === 'GAME_OVER' && cmd.type !== 'resign') return
-    if (!apply(humanId, cmd)) {
+    if (!apply(humanId, cmd, 'human')) {
       emit()
       return
     }
@@ -340,7 +387,6 @@ export function createPveSession(options: PveSessionOptions): PveSession {
     aiRunning = false
     aiTurnPlayer = null
     aiSteps = 0
-    aiRandom = null
 
     config = normalizeConfig({ ...config, ...patch })
     match = describePveMatch(config, humanId)
@@ -351,6 +397,7 @@ export function createPveSession(options: PveSessionOptions): PveSession {
 
     if (state.phase === 'DEPLOY') pumpDeploy()
     scheduleAi()
+    persist('system')
     emit()
   }
 
@@ -362,8 +409,25 @@ export function createPveSession(options: PveSessionOptions): PveSession {
     }
   }
 
-  // 开局：人类不是 0 号座位时，AI 先部署/先行动
-  if (state.phase === 'DEPLOY') pumpDeploy()
+  /**
+   * 把 AI 链重新拉起来。`setTimeout` 活不过页面刷新，所以从存档恢复时
+   * 必须重新排程，否则会卡在"轮到 AI 但没人动"的假死状态。
+   */
+  function resumeScheduling(): void {
+    if (state.phase === 'DEPLOY') {
+      pumpDeploy()
+      persist('system')
+      return
+    }
+    if (state.phase === 'PLAYING' && currentPlayer(state) !== humanId) scheduleAi()
+  }
+
+  if (options.restore) {
+    resumeScheduling()
+  } else if (state.phase === 'DEPLOY') {
+    pumpDeploy()
+    persist('system')
+  }
 
   return {
     getView: buildView,

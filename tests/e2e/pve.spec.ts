@@ -79,8 +79,13 @@ test.describe('单人练习（PVE）', () => {
     await expect(page.getByTestId('pve-map-hint')).toContainText('4 方')
     await expect(page.getByTestId('pve-neutral-hint')).toHaveCount(0)
 
-    // 难度可选
+    // 难度可选（三档：简单 / 普通 / 困难）
+    await expect(page.getByTestId('pve-difficulty-easy')).toBeVisible()
+    await expect(page.getByTestId('pve-difficulty-normal')).toBeVisible()
+    await expect(page.getByTestId('pve-difficulty-hard')).toContainText('困难')
     await page.getByTestId('pve-difficulty-easy').click()
+    await page.getByTestId('pve-difficulty-hard').click()
+    await expect(page.getByTestId('pve-difficulty-hard')).toHaveClass(/picked/)
     await page.getByTestId('pve-difficulty-normal').click()
 
     // 返回主页
@@ -196,5 +201,60 @@ test.describe('单人练习（PVE）', () => {
     const state = await gameState(page)
     expect(state.mapId).toBe('ancient_04')
     expect(state.players).toHaveLength(4)
+  })
+
+  test('刷新页面后自动回到原对局，并能接着打（对局存档）', async ({ page }) => {
+    await openPveSetup(page)
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-difficulty-normal').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+
+    await page.getByTestId('deploy-sword').click()
+    await clickTile(page, 2, 0)
+    await page.getByTestId('deploy-done').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('行动', { timeout: 15_000 })
+
+    const before = await gameState(page)
+    expect(before.phase).toBe('PLAYING')
+    expect(before.units.length).toBeGreaterThan(0)
+
+    // 刷新：不该回到设置页，而是直接接着打
+    await page.reload()
+
+    await expect(page.getByTestId('pve-badge')).toBeVisible()
+    await expect(page.getByTestId('pve-setup')).toHaveCount(0)
+    await expect(page.getByTestId('phase-label')).toHaveText('行动')
+
+    const after = await gameState(page)
+    expect(after.phase).toBe('PLAYING')
+    expect(after.round).toBe(before.round)
+    expect(after.players).toEqual(before.players)
+    expect(after.units.length).toBe(before.units.length)
+
+    // 恢复后仍然可玩：结束回合 → AI 走完 → 控制权回到人类
+    await expect(page.getByTestId('end-turn')).toBeEnabled()
+    await page.getByTestId('end-turn').click()
+    await expect
+      .poll(async () => page.getByTestId('current-player').innerText(), { timeout: 45_000 })
+      .toContain('（你）')
+  })
+
+  test('"退出对局"会清掉存档：再进单人练习是设置页', async ({ page }) => {
+    await openPveSetup(page)
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+
+    await page.getByTestId('deploy-sword').click()
+    await clickTile(page, 2, 0)
+    await page.getByTestId('deploy-done').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('行动', { timeout: 15_000 })
+
+    await page.getByTestId('leave-button').click()
+    await expect(page.getByTestId('entry-online')).toBeVisible()
+
+    await page.getByTestId('entry-pve').click()
+    await expect(page.getByTestId('pve-setup')).toBeVisible()
+    await expect(page.getByTestId('pve-badge')).toHaveCount(0)
   })
 })
