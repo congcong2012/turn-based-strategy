@@ -29,6 +29,13 @@ function zoneLabel(map: MapDef, index: number): string {
   return '中部'
 }
 
+/** 难度选项：加新难度只需要往这张表里加一行 */
+const DIFFICULTY_OPTIONS: Array<{ value: PveDifficulty; label: string; hint: string }> = [
+  { value: 'easy', label: '简单', hint: '出手随意，会漏操作' },
+  { value: 'normal', label: '普通', hint: '会抢据点、会集火残血' },
+  { value: 'hard', label: '困难', hint: '会集火残血、抱团推进、算两步' },
+]
+
 export function PveSetup({ onStart, onNavigate }: PveSetupProps) {
   const [opponents, setOpponents] = useState(1)
   const [humanSeat, setHumanSeat] = useState(0)
@@ -53,7 +60,8 @@ export function PveSetup({ onStart, onNavigate }: PveSetupProps) {
       opponents,
       humanSeat: seat,
       difficulty,
-      // 种子只影响"简单"难度的随机性；用时间戳保证每局不同
+      // 种子决定"简单"难度抽到什么随机数；普通 / 困难是确定性策略。
+      // 用时间戳保证每局不同，同时让同一局（含刷新恢复后）完全可复现。
       seed: Date.now() % 2147483647,
     })
   }
@@ -115,24 +123,18 @@ export function PveSetup({ onStart, onNavigate }: PveSetupProps) {
       <section className="panel">
         <h2>难度</h2>
         <div className="unit-picker" data-testid="pve-difficulty">
-          <button
-            type="button"
-            data-testid="pve-difficulty-easy"
-            className={difficulty === 'easy' ? 'picked' : ''}
-            onClick={() => setDifficulty('easy')}
-          >
-            简单
-            <span className="muted small"> 出手随意，会漏操作</span>
-          </button>
-          <button
-            type="button"
-            data-testid="pve-difficulty-normal"
-            className={difficulty === 'normal' ? 'picked' : ''}
-            onClick={() => setDifficulty('normal')}
-          >
-            普通
-            <span className="muted small"> 会抢据点、会集火残血</span>
-          </button>
+          {DIFFICULTY_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              data-testid={'pve-difficulty-' + option.value}
+              className={difficulty === option.value ? 'picked' : ''}
+              onClick={() => setDifficulty(option.value)}
+            >
+              {option.label}
+              <span className="muted small"> {option.hint}</span>
+            </button>
+          ))}
         </div>
       </section>
 

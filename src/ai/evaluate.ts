@@ -18,7 +18,21 @@ const BUILDING_WEIGHT: Record<string, number> = { hq: 6, barracks: 3, village: 1
 
 const WIN_SCORE = 1_000_000
 
-export function evaluate(state: GameState, playerId: PlayerId, data: GameData = DATA): number {
+/**
+ * 可选评分权重。**默认全为 0**，因此不传权重时评分与"加困难档之前"逐字一致
+ * （普通/简单难度与既有单测都不受影响）；只有困难档会传进来。
+ */
+export interface EvaluateWeights {
+  /** 抱团权重：己方单位离"己方重心"越远扣越多分 */
+  cohesion?: number
+}
+
+export function evaluate(
+  state: GameState,
+  playerId: PlayerId,
+  data: GameData = DATA,
+  weights: EvaluateWeights = {},
+): number {
   // 终局直接给极值，避免"已胜却还在算小分"
   if (state.winner === playerId) return WIN_SCORE
   if (state.eliminated.includes(playerId)) return -WIN_SCORE
@@ -47,6 +61,17 @@ export function evaluate(state: GameState, playerId: PlayerId, data: GameData = 
   const myHq = state.buildings.find((b) => b.owner === playerId && b.type === 'hq')
   const enemyHqs = state.buildings.filter((b) => b.type === 'hq' && b.owner !== playerId)
 
+  // 抱团（仅困难档）：以己方单位的重心为锚，离得越远扣越多
+  const cohesion = weights.cohesion ?? 0
+  const myUnits = cohesion > 0 ? state.units.filter((u) => u.owner === playerId) : []
+  const center =
+    myUnits.length > 0
+      ? {
+          x: myUnits.reduce((sum, u) => sum + u.x, 0) / myUnits.length,
+          y: myUnits.reduce((sum, u) => sum + u.y, 0) / myUnits.length,
+        }
+      : null
+
   for (const unit of state.units) {
     if (unit.owner === playerId) {
       for (const hq of enemyHqs) {
@@ -55,6 +80,7 @@ export function evaluate(state: GameState, playerId: PlayerId, data: GameData = 
       }
       // 站在高防御地形上更安全
       score += defenseOf(state, unit.x, unit.y, data) * 60
+      if (center) score -= chebyshevDistance(unit, center) * cohesion
     } else if (myHq) {
       // 敌人逼近我方王城要扣分（扣得比加分更狠：先保命）
       score -= Math.max(0, 12 - chebyshevDistance(unit, myHq)) * 10

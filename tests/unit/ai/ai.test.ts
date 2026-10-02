@@ -11,7 +11,7 @@ import type { Command, GameState, PlayerId } from '../../../src/game/types'
 import { P1, P2, addUnit, must, newGame, run, startPlaying, testData } from '../game/fixtures'
 
 const data = testData()
-const DIFFICULTIES: Difficulty[] = ['easy', 'normal']
+const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard']
 
 /** 让某位玩家把当前回合（或部署）走完，逐步断言"每一步都合法" */
 function playUntilTurnEnds(
@@ -160,5 +160,49 @@ describe('AI · 自对弈打完整局', () => {
     // 回到 A：此时应能占领
     const { commands } = playUntilTurnEnds(s, P1, 'normal', 17)
     expect(commands.some((c) => c.type === 'capture')).toBe(true)
+  })
+})
+
+describe('AI · 困难档', () => {
+  /**
+   * 困难 vs 普通：4 个种子 × 双方互换 = 8 局。
+   * 普通与困难都**不消耗随机数**，所以结果是确定的 —— 这条不会 flaky。
+   */
+  it('困难档确实比普通档强（8 局至少赢 6 局）', () => {
+    let hardWins = 0
+    for (const seed of [900, 901, 902, 903]) {
+      if (playFullGame({ [P1]: 'hard', [P2]: 'normal' }, seed).state.winner === P1) hardWins += 1
+      if (playFullGame({ [P1]: 'normal', [P2]: 'hard' }, seed).state.winner === P2) hardWins += 1
+    }
+    expect(hardWins).toBeGreaterThanOrEqual(6)
+  }, 60_000)
+
+  it('困难 vs 困难：同档自对弈也能收局', () => {
+    const { state } = playFullGame({ [P1]: 'hard', [P2]: 'hard' }, 4004)
+    expect(state.phase).toBe('GAME_OVER')
+  })
+
+  it('困难档会按计划放满 3 个单位', () => {
+    const { state } = playUntilTurnEnds(newGame(data), P1, 'hard', 5)
+    expect(unitsOf(state, P1).length).toBe(3)
+  })
+
+  it('单步决策耗时可控：中盘（单位不少）也要在预算内', () => {
+    // 先让双方用普通难度跑到第 6 回合，拿到一个"单位已经不少"的局面
+    let s = createGame('test', [P1, P2], data)
+    for (let i = 0; i < 800 && s.phase !== 'GAME_OVER' && s.round <= 6; i += 1) {
+      const player = s.phase === 'DEPLOY' ? s.players.find((p) => !s.deploy[p].done) : currentPlayer(s)
+      if (!player) break
+      const result = applyCommand(s, player, nextCommand(s, player, 'normal', data), data)
+      if (!result.ok) break
+      s = result.state
+    }
+
+    const actor = s.phase === 'DEPLOY' ? s.players.find((p) => !s.deploy[p].done) : currentPlayer(s)
+    if (!actor) return
+    const started = Date.now()
+    nextCommand(s, actor, 'hard', data)
+    // 上限给得很宽：真正要挡住的是"深搜把单步拖成几秒"这类退化
+    expect(Date.now() - started).toBeLessThan(800)
   })
 })
