@@ -3,7 +3,36 @@
  * 这条对应"构建产物可部署到 GitHub Pages"的验收项。
  */
 import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { joinRoom, randomRoom, waitForHost } from './helpers'
+
+async function boardBox(page: Page) {
+  const canvas = page.locator('.board-host canvas')
+  await expect(canvas).toBeVisible()
+  const box = await canvas.boundingBox()
+  if (!box) throw new Error('canvas 不可见')
+  return box
+}
+
+/** 点击棋盘上的某个格子（真实鼠标事件） */
+async function clickTile(page: Page, x: number, y: number): Promise<void> {
+  const box = await boardBox(page)
+  const point = await page.evaluate(
+    ([tx, ty]) =>
+      (globalThis as unknown as { __atBoard: { project: (x: number, y: number) => { x: number; y: number } } }).__atBoard.project(
+        tx,
+        ty,
+      ),
+    [x, y] as const,
+  )
+  await page.mouse.click(box.x + point.x, box.y + point.y)
+}
+
+function pveState(page: Page) {
+  return page.evaluate(() =>
+    (globalThis as unknown as { __atGame: { getState: () => unknown } }).__atGame.getState(),
+  ) as Promise<{ phase: string; players: string[]; units: Array<{ owner: string }> }>
+}
 
 test.describe('生产构建（GitHub Pages 子路径）', () => {
   test('页面加载无错误，资源走相对 base', async ({ page }) => {
@@ -67,17 +96,26 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
     await expect(page.getByTestId('pve-badge')).toBeVisible()
     await expect(page.getByTestId('entry-online')).toHaveCount(0)
 
-    // AI 已自动完成部署：棋盘上应同时存在两方的部队
-    const state = await page.evaluate(() =>
-      (
-        globalThis as unknown as {
-          __atGame?: { getState: () => { players: string[]; units: Array<{ owner: string }> } }
-        }
-      ).__atGame?.getState(),
-    )
-    expect(state?.players).toHaveLength(2)
-    const owners = new Set((state?.units ?? []).map((u) => u.owner))
-    expect(owners.size).toBe(2)
+    // AI 已自动完成部署：开局后场上应立刻出现 AI 的部队（此时人类还没放兵）
+    await expect
+      .poll(async () => (await pveState(page)).units.length, { timeout: 10_000 })
+      .toBeGreaterThan(0)
+    const ownersAfterStart = (await pveState(page)).units.map((u) => u.owner)
+    expect(new Set(ownersAfterStart).size).toBe(1)
+    expect(ownersAfterStart).not.toContain('you')
+
+    // 人类部署 1 个刀盾兵到己方（北侧）部署区 → 阵中同时有敌我两方部队
+    await page.getByTestId('deploy-sword').click()
+    await clickTile(page, 2, 0)
+    await expect
+      .poll(
+        async () => new Set((await pveState(page)).units.map((u) => u.owner)).size,
+        { timeout: 10_000 },
+      )
+      .toBe(2)
+
+    const state = await pveState(page)
+    expect(state.players).toHaveLength(2)
 
     // 纯离线：全程只应加载同源资源，不该有任何外部请求（信令/字体/CDN）
     const external = requests.filter((url) => {
