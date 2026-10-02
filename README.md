@@ -62,23 +62,23 @@
 ## 本地开发
 
 ```bash
-pnpm install
-pnpm dev            # http://127.0.0.1:5173
-pnpm test           # 单元测试（202 个）
-pnpm e2e            # 端到端测试（含真实 P2P、手动直连与移动端）
-pnpm build          # 类型检查 + 生产构建
-pnpm preview        # 预览构建产物
+npm install
+npm run dev            # http://127.0.0.1:5173
+npm test           # 单元测试（202 个）
+npm run e2e            # 端到端测试（含真实 P2P、手动直连与移动端）
+npm run build          # 类型检查 + 生产构建
+npm run preview        # 预览构建产物
 ```
 
 调试：
 
 - 同一台机器上开两个标签页免网络调试：`?transport=local`（仅 DEV 生效）
 - 线上排查：加 `?debug=1` 后可在控制台读到 `window.__atGame` 与 `window.__atBoard`
-- 经济数值调整：改 `src/data/*.json`，再跑 `pnpm exec vitest run tests/unit/balance.test.ts` 看 30 回合资金曲线
+- 经济数值调整：改 `src/data/*.json`，再跑 `npx vitest run tests/unit/balance.test.ts` 看 30 回合资金曲线
 
 ## 部署
 
-推送到 `main`/`master` 会自动触发 `.github/workflows/deploy.yml`：跑单测 → `pnpm build` → 上传 `dist/` → 发布到 GitHub Pages。
+推送到 `main`/`master` 会自动触发 `.github/workflows/deploy.yml`：跑单测 → `npm run build` → 上传 `dist/` → 发布到 GitHub Pages。
 
 > 仓库 Settings → Pages → Build and deployment → **Source 必须选 GitHub Actions**。
 > 若选「Deploy from a branch」，Pages 会把仓库根目录当站点，直接返回源码版 index.html，表现为白屏。

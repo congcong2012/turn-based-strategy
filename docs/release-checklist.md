@@ -14,32 +14,32 @@
 ## 1. 静态检查与单元测试
 
 ```bash
-pnpm typecheck      # 期望：无输出（tsc 通过）
-pnpm test           # 期望：138 passed
+npm run typecheck      # 期望：无输出（tsc 通过）
+npm test           # 期望：202 passed
 ```
 
 通过标准：**0 failed**。经济数值改过的话，额外看曲线：
 
 ```bash
-pnpm exec vitest run tests/unit/balance.test.ts   # 打印 30 回合资金/兵力曲线
+npx vitest run tests/unit/balance.test.ts   # 打印 30 回合资金/兵力曲线
 ```
 
 ## 2. 生产构建
 
 ```bash
-pnpm build          # 期望：0 error；记录主包与 Pixi 分包体积
+npm run build          # 期望：0 error；记录主包与 Pixi 分包体积
 ```
 
 通过标准：构建无 error；`dist/index.html` 里的资源路径是 `./assets/...`（相对路径，子路径部署必需）。
 
-## 3. 端到端回归（4 条轨道，全绿才算过）
+## 3. 端到端回归（5 条轨道，全绿才算过）
 
 ```bash
-pnpm exec playwright test --project=local     # 29 passed（约 2.5 分钟，不需要公网）
-pnpm exec playwright test --project=mobile    # 2 passed（Pixel 5 视口 + 触摸）
-pnpm exec playwright test --project=preview   # 3 passed（dist 产物 + 子路径）
-pnpm exec playwright test --project=p2p       # 1 passed（真实 WebRTC + 公共信令，抖动可重试一次）
-pnpm exec playwright test --project=manual    # 1 passed（手动直连 SDP 交换，约 1 分钟）
+npx playwright test --project=local     # 34 passed（约 3 分钟，不需要公网）
+npx playwright test --project=mobile    # 2 passed（Pixel 5 视口 + 触摸）
+npx playwright test --project=preview   # 4 passed（dist 产物 + 子路径）
+npx playwright test --project=p2p       # 1 passed（真实 WebRTC + 公共信令，抖动可重试一次）
+npx playwright test --project=manual    # 1 passed（手动直连 SDP 交换，约 1 分钟）
 ```
 
 通过标准：**0 failed**。
@@ -49,7 +49,7 @@ pnpm exec playwright test --project=manual    # 1 passed（手动直连 SDP 交�
 ## 4. 子路径复现（线上环境的本地替身）
 
 ```bash
-pnpm build
+npm run build
 node scripts/serve-subpath.mjs turn-based-strategy 4180
 # 浏览器打开 http://127.0.0.1:4180/turn-based-strategy/
 ```

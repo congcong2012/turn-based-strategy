@@ -10,7 +10,7 @@
 ## M1 · 可联机大厅（GitHub Pages 静态） ✅
 
 交付物
-- [x] Vite + React + TS 工程，可 `pnpm build` 出纯静态 `dist/`
+- [x] Vite + React + TS 工程，可 `npm run build` 出纯静态 `dist/`
 - [x] Trystero（@trystero-p2p/mqtt）P2P 房间，公共信令默认 MQTT
 - [x] 页面：昵称、房间码（归一化 + 随机生成）、加入、玩家列表、准备、开始（提示）
 - [x] 第一个加入者自动成为房主，UI 显示👑房主标识
@@ -101,7 +101,7 @@
 | 项 | 结果 |
 | --- | --- |
 | 单元测试 | ✅ 88 passed（新增产能/出场位 3 条、平衡 3 条） |
-| 模拟报告 | ✅ `pnpm exec vitest run tests/unit/balance.test.ts` 直接打印资金曲线 |
+| 模拟报告 | ✅ `npx vitest run tests/unit/balance.test.ts` 直接打印资金曲线 |
 
 ## M5 · 打磨与发布 ✅
 
@@ -279,17 +279,17 @@
 ## 常用命令
 
 ```bash
-pnpm install          # 安装依赖
-pnpm dev              # 本地开发（http://127.0.0.1:5173）
-pnpm test             # 单元测试（202 个）
-pnpm build            # 类型检查 + 生产构建（dist/）
-pnpm preview          # 预览生产构建（http://127.0.0.1:4173）
-pnpm e2e:local        # 本地传输 E2E（无需网络）
-pnpm e2e:p2p          # 真实 P2P E2E（需要公网信令）
-pnpm e2e              # 全部 E2E（local / mobile / preview / p2p / manual 五条轨道）
+npm install          # 安装依赖
+npm run dev              # 本地开发（http://127.0.0.1:5173）
+npm test             # 单元测试（202 个）
+npm run build            # 类型检查 + 生产构建（dist/）
+npm run preview          # 预览生产构建（http://127.0.0.1:4173）
+npm run e2e:local        # 本地传输 E2E（无需网络）
+npm run e2e:p2p          # 真实 P2P E2E（需要公网信令）
+npm run e2e              # 全部 E2E（local / mobile / preview / p2p / manual 五条轨道）
 ```
 
-> 首次运行 E2E 需要 `pnpm exec playwright install chromium`（约 170MB）。
+> 首次运行 E2E 需要 `npx playwright install chromium`（约 170MB）。
 > CI 只跑单元测试 + 构建；E2E 作为本地质量门（真实 P2P 依赖公共信令，不适合放进部署流水线）。
 >
 > **发版前必须按 docs/release-checklist.md 全量走一遍**，并把结果记进 CHANGELOG.md。
@@ -299,11 +299,11 @@ pnpm e2e              # 全部 E2E（local / mobile / preview / p2p / manual 五
 1. **仓库 Settings → Pages → Build and deployment → Source 必须选 `GitHub Actions`**
    （若选的是「Deploy from a branch」，Pages 会把仓库根目录当站点，直接返回源码版 index.html → 白屏）；
 2. 推送到 `main` 或 `master` 会自动触发 `.github/workflows/deploy.yml`（也可手动 Run workflow）；
-3. 工作流会跑单元测试 → `pnpm build` → 上传 `dist/` → 发布到 `https://<user>.github.io/<repo>/`；
+3. 工作流会跑单元测试 → `npm run build` → 上传 `dist/` → 发布到 `https://<user>.github.io/<repo>/`；
 4. 本地可先自检子路径是否正常（复现线上环境）：
 
    ```bash
-   pnpm build
+   npm run build
    node scripts/serve-subpath.mjs turn-based-strategy 4180   # 参数传仓库名，不要传 /repo/
    # 浏览器打开 http://127.0.0.1:4180/turn-based-strategy/
    ```
