@@ -13,7 +13,10 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "e2e:local": "playwright test --project=local",
-    "e2e:p2p": "playwright test --project=p2p"
+    "e2e:p2p": "playwright test --project=p2p",
+    "e2e:preview": "playwright test --project=preview",
+    "e2e:ci": "playwright test --project=local --project=mobile --project=preview --grep-invert @network",
+    "e2e:preview:net": "playwright test --project=preview --grep @network"
   },
   "dependencies": {
     "@trystero-p2p/core": "^0.25.4",

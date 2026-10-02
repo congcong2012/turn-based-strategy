@@ -64,7 +64,10 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
     expect(consoleErrors.filter((line) => !line.includes('favicon'))).toEqual([])
   })
 
-  test('生产构建可以真的加入房间并成为房主', async ({ page }) => {
+  // 下面两条在生产构建上走 Trystero 的公共 MQTT 信令 —— 需要公网。
+  // 打 @network 标记：从 CI 的阻塞门里排除（见 .github/workflows/deploy.yml 的 e2e job），
+  // 单独以非阻塞步骤运行，这样公共信令抖动不会卡住上线。
+  test('生产构建可以真的加入房间并成为房主', { tag: '@network' }, async ({ page }) => {
     const room = randomRoom()
     await page.goto('/?page=lobby')
     await joinRoom(page, room, '生产将军')
@@ -72,7 +75,7 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
     await expect(page.getByTestId('player-item')).toHaveCount(1)
   })
 
-  test('生产构建不暴露 DEV 调试入口（?as= / ?transport=local 无效）', async ({ page }) => {
+  test('生产构建不暴露 DEV 调试入口（?as= / ?transport=local 无效）', { tag: '@network' }, async ({ page }) => {
     await page.goto('/?transport=local&as=hacker&page=lobby')
     await expect(page.getByTestId('transport-label')).toHaveCount(0)
     const room = randomRoom()
