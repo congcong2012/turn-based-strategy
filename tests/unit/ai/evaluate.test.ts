@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { evaluate } from '../../../src/ai/evaluate'
 import { unitsOf } from '../../../src/game/board'
+import { baseDamage } from '../../../src/game/combat'
 import { createGame } from '../../../src/game/state'
 import { P1, P2, addUnit, newGame, startPlaying, testData } from '../game/fixtures'
 
@@ -96,6 +97,9 @@ describe('evaluate', () => {
 
 /** v2 开关的权重打包（困难档实际使用的那一套） */
 const V2 = { economy: 3, threat: 3, defend: 6, repair: 8, scoreAware: true }
+
+/** 切片 3：评估器 v3 的全部开关（master 档使用的那一套） */
+const V3 = { pendingMaterial: 0.8, counterValue: 2, rangedSafety: 0.2, exposure: 0.5 }
 
 describe('evaluate · v2 开关', () => {
   it('打开全部开关后仍然对称（交换双方视角后分数互换）', () => {
@@ -205,5 +209,119 @@ describe('evaluate · v2 开关', () => {
     const gapWithout = evaluate(late, P1, data) - evaluate(lateBase, P1, data)
     expect(gapWith - gapWithout).toBeCloseTo(5 * 150, 6)
     expect(gapWith).toBeGreaterThan(gapWithout)
+  })
+})
+
+/** 把双方归属整体对调（含 pending），用于对称性断言 */
+function swapSides(s: ReturnType<typeof startPlaying>) {
+  const swapOwner = (o: string | null) => (o === P1 ? P2 : o === P2 ? P1 : null)
+  return {
+    ...s,
+    players: [P2, P1],
+    units: s.units.map((u) => ({ ...u, owner: swapOwner(u.owner) as string })),
+    buildings: s.buildings.map((b) => ({
+      ...b,
+      owner: swapOwner(b.owner),
+      capture: b.capture ? { ...b.capture, playerId: swapOwner(b.capture.playerId) as string } : null,
+    })),
+    funds: { [P1]: s.funds[P2] ?? 0, [P2]: s.funds[P1] ?? 0 },
+    pending: s.pending.map((p) => ({ ...p, owner: swapOwner(p.owner) as string })),
+  }
+}
+
+/** 造一个"有单位、有订单"的局面，供 v3 各项使用 */
+function withPending(base: ReturnType<typeof startPlaying>, owner: string, type: string, buildingId: string) {
+  return {
+    ...base,
+    pending: [
+      ...base.pending,
+      { id: 'po-' + type, type, owner: owner as string, buildingId, turnSeq: base.turnSeq },
+    ],
+  }
+}
+
+describe('evaluate · v3 开关（切片 3）', () => {
+  it('四个开关默认全关时，与不传权重逐字一致（行为零变化）', () => {
+    const s = withPending(startPlaying(newGame(data), data), P1, 'sword', 'bk-A')
+    const explicitZero = { pendingMaterial: 0, counterValue: 0, rangedSafety: 0, exposure: 0 }
+    expect(evaluate(s, P1, data, explicitZero)).toBe(evaluate(s, P1, data))
+    expect(evaluate(s, P2, data, explicitZero)).toBe(evaluate(s, P2, data))
+  })
+
+  it('打开全部 v3 开关后仍然对称（交换双方视角后分数互换，含 pending）', () => {
+    const s = withPending(
+      addUnit(startPlaying(newGame(data), data), data, 'bow', P1, 3, 3),
+      P1,
+      'sword',
+      'bk-A',
+    )
+    const st = swapSides(s)
+    expect(evaluate(st, P2, data, V3)).toBeCloseTo(evaluate(s, P1, data, V3), 6)
+    expect(evaluate(st, P1, data, V3)).toBeCloseTo(evaluate(s, P2, data, V3), 6)
+  })
+
+  it('E1：`pending` 计入材料 —— 己方订单加分、对手订单减分（按造价 × 0.8）', () => {
+    const base = startPlaying(newGame(data), data)
+    const cost = data.units.sword.cost
+    const mine = withPending(base, P1, 'sword', 'bk-A')
+    const theirs = withPending(base, P2, 'sword', 'bk-B')
+
+    // 空 pending 时开关不产生任何分数
+    expect(evaluate(base, P1, data, { pendingMaterial: 0.8 })).toBeCloseTo(evaluate(base, P1, data), 6)
+
+    const mineGain = evaluate(mine, P1, data, { pendingMaterial: 0.8 }) - evaluate(base, P1, data, { pendingMaterial: 0.8 })
+    const theirGain = evaluate(theirs, P1, data, { pendingMaterial: 0.8 }) - evaluate(base, P1, data, { pendingMaterial: 0.8 })
+    expect(mineGain).toBeCloseTo(cost * 0.8, 6)
+    expect(theirGain).toBeCloseTo(-cost * 0.8, 6)
+  })
+
+  it('E2：兵种克制的价值 = 各"对敌阵平均伤害"按系数折算（零和）', () => {
+    // 让 B 出一队重骑兵，A 出一个长枪（克制）——
+    // 断言"打开 E2 与关闭 E2 的差值"精确等于公式值，且双方互为相反数。
+    const base = addUnit(addUnit(startPlaying(newGame(data), data), data, 'heavyCav', P2, 3, 3), data, 'spear', P1, 3, 5)
+    const expected = () => {
+      let sum = 0
+      for (const u of base.units) {
+        const foes = base.units.filter((x) => x.owner !== u.owner)
+        if (foes.length === 0) continue
+        let avg = 0
+        for (const f of foes) avg += baseDamage(u.type, f.type, data)
+        sum += (u.owner === P1 ? 1 : -1) * (avg / foes.length) * 2
+      }
+      return sum
+    }
+
+    const deltaP1 = evaluate(base, P1, data, { counterValue: 2 }) - evaluate(base, P1, data)
+    const deltaP2 = evaluate(base, P2, data, { counterValue: 2 }) - evaluate(base, P2, data)
+    expect(deltaP1).toBeCloseTo(expected(), 6)
+    expect(deltaP1 + deltaP2).toBeCloseTo(0, 6)
+  })
+
+  it('E3：远程单位"能打到敌、而敌打不到我"才加分（贴身则没有）', () => {
+    const base = startPlaying(newGame(data), data)
+    const bowCost = data.units.bow.cost
+    // 弓（射程 2）与敌方刀盾兵（射程 1）相距 2 格 → 我能打它、它打不到我
+    const kiting = addUnit(addUnit(base, data, 'bow', P1, 0, 3), data, 'sword', P2, 0, 5)
+    const gainKiting = evaluate(kiting, P1, data, { rangedSafety: 0.2 }) - evaluate(kiting, P1, data)
+    expect(gainKiting).toBeCloseTo(bowCost * 0.2, 6)
+
+    // 贴脸（距离 1）→ 双方都能打到 → 不加分
+    const melee = addUnit(addUnit(base, data, 'bow', P1, 0, 3), data, 'sword', P2, 0, 4)
+    const gainMelee = evaluate(melee, P1, data, { rangedSafety: 0.2 }) - evaluate(melee, P1, data)
+    expect(gainMelee).toBeCloseTo(0, 6)
+  })
+
+  it('E4：暴露面只在"会被打死"时扣分（安全位不扣）', () => {
+    const base = startPlaying(newGame(data), data)
+    const bowCost = data.units.bow.cost
+    // 两台重骑兵贴住一个弓 —— 预计承受伤害 ≥ 弓的血量 → 会被打死
+    const doomed = addUnit(addUnit(addUnit(base, data, 'bow', P1, 3, 3), data, 'heavyCav', P2, 3, 4), data, 'heavyCav', P2, 4, 3)
+    const gainDoomed = evaluate(doomed, P1, data, { exposure: 0.5 }) - evaluate(doomed, P1, data)
+    expect(gainDoomed).toBeLessThanOrEqual(-bowCost * 0.5 + 1e-6)
+
+    // 孤立的弓、附近无敌军 → 不扣分
+    const safe = addUnit(base, data, 'bow', P1, 3, 3)
+    const gainSafe = evaluate(safe, P1, data, { exposure: 0.5 }) - evaluate(safe, P1, data)
+    expect(gainSafe).toBeCloseTo(0, 6)
   })
 })

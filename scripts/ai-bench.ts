@@ -55,6 +55,34 @@ const V1_HARD: AiProfile = {
   repair: 0,
   counter: 0,
   scoreAware: false,
+  searchDepth: 0,
+  beamWidth: 0,
+  innerBeamWidth: 0,
+  nodeBudget: 0,
+  expansionBudget: 0,
+  pendingMaterial: 0,
+  counterValue: 0,
+  rangedSafety: 0,
+  exposure: 0,
+  rolloutMySteps: 0,
+  rolloutFoeSteps: 0,
+  rolloutFoeLookahead: 0,
+  rolloutBudget: 0,
+}
+
+/**
+ * 切片 3 消融基准：v2 全开、v3 全关（= 现有 `hard` 的评估），用于单独衡量 v3 每一项的贡献。
+ */
+const V3_BASE: AiProfile = {
+  ...V1_HARD,
+  cohesion: 0,
+  v2: true,
+  smartProduce: true,
+  economy: 3,
+  defend: 6,
+  repair: 8,
+  counter: 1,
+  scoreAware: true,
 }
 
 /** 消融基准：打开 v2 语义，但所有具体开关关闭（用来单独衡量"有动作就做"这一改动） */
@@ -98,12 +126,32 @@ const V2_VARIANTS: Record<string, AiProfile> = {
     counter: 1,
     scoreAware: true,
   },
+
+  // —— 切片 3（评估器 v3）：逐项消融 + 全开 ——
+  /** 基准：v2 全开、v3 全关（= 现有 hard 的评估） */
+  'v3-base': { ...V3_BASE },
+  /** E2：pending 计入材料 */
+  'v3-e1': { ...V3_BASE, pendingMaterial: 0.8 },
+  /** E2：兵种克制的价值 */
+  'v3-e2': { ...V3_BASE, counterValue: 2 },
+  /** E3：远程安全站位 */
+  'v3-e3': { ...V3_BASE, rangedSafety: 0.2 },
+  /** E4：暴露面（仅致命档） */
+  'v3-e4': { ...V3_BASE, exposure: 0.5 },
+  /** 四项全开（= master 档的评估） */
+  'v3-all': { ...V3_BASE, pendingMaterial: 0.8, counterValue: 2, rangedSafety: 0.2, exposure: 0.5 },
 }
 
 const POLICIES: Record<string, Policy> = {
   easy: (s, p, rng) => nextCommand(s, p, 'easy', DATA, rng),
   normal: (s, p, rng) => nextCommand(s, p, 'normal', DATA, rng),
   hard: (s, p, rng) => nextCommand(s, p, 'hard', DATA, rng),
+  /** 切片 3：评估器 v3（无搜索） */
+  master: (s, p, rng) => nextCommand(s, p, 'master', DATA, rng),
+  /** 切片 2：搜索档（beam 极小极大 + α-β）；切片 3 起其评估 = master */
+  expert: (s, p, rng) => nextCommand(s, p, 'expert', DATA, rng),
+  /** 切片 4：回合级 rollout（评估用 hard 那一套，只换机制） */
+  oracle: (s, p, rng) => nextCommand(s, p, 'oracle', DATA, rng),
   'v1-hard': (s, p, rng) => nextCommandWith(s, p, V1_HARD, DATA, rng),
   ...Object.fromEntries(
     Object.entries(V2_VARIANTS).map(([name, profile]) => [
@@ -136,18 +184,29 @@ interface BenchArgs {
 }
 
 const DEFAULT_PAIRS: Array<[string, string]> = [
-  ['hard', 'normal'],
+  // 切片 4：回合级 rollout 的主验收（oracle = hard 的评估 + 回合级 rollout，只换机制）
+  ['oracle', 'hard'],
+  // 切片 3：评估器 v3 的净增益（master = hard + v3 四个开关，唯一差别是评估）
+  ['master', 'hard'],
+  // 切片 2 重测：搜索在"补完评估"之后值多少分（expert 与 master 只差搜索）
+  ['expert', 'master'],
+  // 底线与回归
+  ['oracle', 'v1-hard'],
+  ['oracle', 'random'],
+  ['master', 'v1-hard'],
+  ['master', 'random'],
   ['hard', 'v1-hard'],
   ['hard', 'random'],
-  ['normal', 'easy'],
-  ['normal', 'random'],
-  ['hard', 'easy'],
+  ['hard', 'normal'],
 ]
 
 const DEFAULT_MIRRORS: Array<[string, string]> = [
   ['easy', 'easy'],
   ['normal', 'normal'],
   ['hard', 'hard'],
+  ['master', 'master'],
+  ['expert', 'expert'],
+  ['oracle', 'oracle'],
 ]
 
 function parseArgs(argv: string[]): BenchArgs {
@@ -374,10 +433,14 @@ function main(): void {
   const wallSeconds = ((Date.now() - started) / 1000).toFixed(1)
 
   const ladderLines = pairRows
-    .filter((r) => r.label.startsWith('hard vs '))
+    .filter((r) => {
+      const first = r.label.split(' vs ')[0]
+      return first === 'hard' || first === 'master' || first === 'expert' || first === 'oracle'
+    })
     .map((r) => {
       const rate = r.winsFirst / r.games
-      return '- ' + (rate > 0.5 ? '✅' : '⚠️') + ' ' + r.label + '：hard 胜率 ' + pct(rate) + (rate > 0.5 ? '' : ' ← 未过半')
+      const first = r.label.split(' vs ')[0]
+      return '- ' + (rate > 0.5 ? '✅' : '⚠️') + ' ' + r.label + '：' + first + ' 胜率 ' + pct(rate) + (rate > 0.5 ? '' : ' ← 未过半')
     })
 
   const report = [

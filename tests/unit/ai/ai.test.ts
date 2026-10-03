@@ -12,7 +12,7 @@ import type { Command, GameState, PlayerId } from '../../../src/game/types'
 import { P1, P2, addUnit, must, newGame, run, startPlaying, testData } from '../game/fixtures'
 
 const data = testData()
-const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard']
+const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard', 'master', 'expert', 'oracle']
 
 /** 让某位玩家把当前回合（或部署）走完，逐步断言"每一步都合法" */
 function playUntilTurnEnds(
@@ -247,5 +247,93 @@ describe('AI · 困难档', () => {
     nextCommand(s, actor, 'hard', data)
     // 上限给得很宽：真正要挡住的是"深搜把单步拖成几秒"这类退化
     expect(Date.now() - started).toBeLessThan(800)
+  })
+})
+
+describe('AI · 大师档（切片 3 · 评估器 v3）', () => {
+  /**
+   * 大师档 = hard + 评估器 v3 的四个开关，**不加搜索**（因此单步耗时与 hard 同量级）。
+   * 强度（master vs hard）由 `npm run bench:ai` 在真实地图上度量（见 `docs/ai-bench-eval.md`）；
+   * 这里只守：能收局、强于普通档、部署计划一致、不因新评估项卡住。
+   */
+  it('真实地图上强于普通档（4 局至少赢 3 局）', () => {
+    let masterWins = 0
+    for (const seed of [900, 901]) {
+      if (playFullGameRealMap({ [P1]: 'master', [P2]: 'normal' }, seed).state.winner === P1) masterWins += 1
+      if (playFullGameRealMap({ [P1]: 'normal', [P2]: 'master' }, seed).state.winner === P2) masterWins += 1
+    }
+    expect(masterWins).toBeGreaterThanOrEqual(3)
+  }, 180_000)
+
+  it('fixtures 上大师 vs 困难能收局', () => {
+    const { state } = playFullGame({ [P1]: 'master', [P2]: 'hard' }, 7007)
+    expect(state.phase).toBe('GAME_OVER')
+  }, 120_000)
+
+  it('大师档会按计划放满 3 个单位', () => {
+    const { state } = playUntilTurnEnds(newGame(data), P1, 'master', 5)
+    expect(unitsOf(state, P1).length).toBe(3)
+  })
+
+  it('大师档对局中从不投降', () => {
+    const { commands } = playUntilTurnEnds(startPlaying(newGame(data), data), P1, 'master', 91)
+    expect(commands.some((c) => c.type === 'resign')).toBe(false)
+  })
+})
+
+describe('AI · 神谕档（切片 4 · 回合级 rollout）', () => {
+  /**
+   * 强度（oracle vs hard）由 `npm run bench:ai` 在真实地图上度量（见 `docs/ai-bench-rollout.md`）——
+   * oracle 单步要跑整回合 rollout，真实地图一局就要数分钟，放进单测太慢。
+   * 这里只守：部署计划与 hard 一致、不投降（整局合法性/终止性由 `rollout.test.ts` 与 `it.each` 覆盖）。
+   */
+  it('神谕档会按计划放满 3 个单位', () => {
+    const { state } = playUntilTurnEnds(newGame(data), P1, 'oracle', 5)
+    expect(unitsOf(state, P1).length).toBe(3)
+  })
+
+  it('神谕档对局中从不投降', () => {
+    const { commands } = playUntilTurnEnds(startPlaying(newGame(data), data), P1, 'oracle', 93)
+    expect(commands.some((c) => c.type === 'resign')).toBe(false)
+  })
+})
+
+describe('AI · 专家档（切片 2 · 搜索层）', () => {
+  /**
+   * 强度（expert ≥70% 胜 hard）与单指令耗时 p95 由 `npm run bench:ai` 在**真实地图**上度量
+   * （见 `docs/ai-bench-slice2.md`）——真实地图一局对 expert 就要数十秒，放进单测太慢。
+   * 这里只守：能收局、不投降、部署计划与 hard 一致、单步不失控。
+   */
+  it('专家 vs 普通：fixtures 上也能收局', () => {
+    const { state } = playFullGame({ [P1]: 'expert', [P2]: 'normal' }, 6006)
+    expect(state.phase).toBe('GAME_OVER')
+  }, 180_000)
+
+  it('专家档对局中从不投降', () => {
+    const { commands } = playUntilTurnEnds(startPlaying(newGame(data), data), P1, 'expert', 88)
+    expect(commands.some((c) => c.type === 'resign')).toBe(false)
+  })
+
+  it('专家档会按计划放满 3 个单位（部署策略与 hard 同源）', () => {
+    const { state } = playUntilTurnEnds(newGame(data), P1, 'expert', 5)
+    expect(unitsOf(state, P1).length).toBe(3)
+  })
+
+  it('单步决策耗时可控：即便搜索也要远低于"整回合 ≤30s"的允许值', () => {
+    let s = createGame('test', [P1, P2], data)
+    for (let i = 0; i < 800 && s.phase !== 'GAME_OVER' && s.round <= 6; i += 1) {
+      const player = s.phase === 'DEPLOY' ? s.players.find((p) => !s.deploy[p].done) : currentPlayer(s)
+      if (!player) break
+      const result = applyCommand(s, player, nextCommand(s, player, 'normal', data), data)
+      if (!result.ok) break
+      s = result.state
+    }
+
+    const actor = s.phase === 'DEPLOY' ? s.players.find((p) => !s.deploy[p].done) : currentPlayer(s)
+    if (!actor) return
+    const started = Date.now()
+    nextCommand(s, actor, 'expert', data)
+    // fixtures 很小、分支远少于真实地图 —— 这里给一个宽松但仍能挡住"深搜失控"的上限
+    expect(Date.now() - started).toBeLessThan(2000)
   })
 })

@@ -20,7 +20,7 @@
 import { DATA, buildingType, unitType } from '../game/data'
 import type { GameData } from '../game/data'
 import { buildingAt, defenseOf } from '../game/board'
-import { computeDamage } from '../game/combat'
+import { baseDamage, computeDamage } from '../game/combat'
 import { chebyshevDistance } from '../game/movement'
 import { scoreOf } from '../game/state'
 import type { GameState, PlayerId } from '../game/types'
@@ -57,6 +57,24 @@ export interface EvaluateWeights {
   repair?: number
   /** 比分意识：临近回合上限时按 GDD 9.2 计分表叠加分差 */
   scoreAware?: boolean
+
+  // —— 切片 3（评估器 v3）：全部默认 0，只有新档 `master` / `expert` 打开 ——
+
+  /**
+   * E1：`pending`（**已付费、未出场**）按造价的这个比例计入材料分。
+   * 现状是"下单即亏分"（评估看不见订单），AI 因而不愿把军费转成兵力。
+   */
+  pendingMaterial?: number
+  /** E2：单位"对敌方阵容的平均伤害"折算的分数系数（兵种克制的价值，v1 完全没用上 matchup 表） */
+  counterValue?: number
+  /** E3：远程单位处于"能打到敌、而敌打不到我"的站位时，按造价加成的系数 */
+  rangedSafety?: number
+  /**
+   * E4：暴露面 —— 单位处于敌方可达范围、且**预计承受伤害 ≥ 其血量**（即会被打死）时，
+   * 按造价扣分的系数。**只在"致命"这一档触发**：切片 1 的教训是乘性、大权重的静态威胁项
+   * 会压过材料分（单项消融 0/16 胜），因此这里严格限定为加法 + 单档触发。
+   */
+  exposure?: number
 }
 
 export function evaluate(
@@ -74,6 +92,10 @@ export function evaluate(
   const defend = weights.defend ?? 0
   const repair = weights.repair ?? 0
   const cohesion = weights.cohesion ?? 0
+  const pendingMaterial = weights.pendingMaterial ?? 0
+  const counterValue = weights.counterValue ?? 0
+  const rangedSafety = weights.rangedSafety ?? 0
+  const exposure = weights.exposure ?? 0
 
   let score = 0
 
@@ -82,6 +104,16 @@ export function evaluate(
     const type = unitType(unit.type, data)
     const worth = type.cost * (unit.hp / type.hp)
     score += unit.owner === playerId ? worth : -worth
+  }
+
+  // 1b) E1（切片 3）：`pending`（已付费、未出场）计入材料分。
+  // 评估原先完全看不见订单 → 生产会表现为"白扣军费"，AI 因而不愿把军费转成兵力。
+  // 按造价打 pendingMaterial 折（未出场，不该按满值算）。零和：己方加、对手减。
+  if (pendingMaterial > 0) {
+    for (const order of state.pending) {
+      const type = unitType(order.type, data)
+      score += (order.owner === playerId ? 1 : -1) * type.cost * pendingMaterial
+    }
   }
 
   // 2) 据点与经济 / 占领博弈
@@ -167,6 +199,61 @@ export function evaluate(
       const here = buildingAt(state, unit.x, unit.y)
       if (!here || here.owner !== playerId) continue
       score += Math.min(data.rules.repairPerTurn, type.hp - unit.hp) * repair
+    }
+  }
+
+  // ---- 以下是切片 3（评估器 v3）的新项。全部走权重开关、默认 0；一律加法、零和对称。----
+
+  // E2（切片 3）：兵种克制的价值 —— 单位值多少分，应看它"对**敌方阵容**能打出多少伤害"，
+  // 而不是只看造价（v1 完全没用上 matchup 伤害表：枪克骑、盾克步…全部浪费）。
+  if (counterValue > 0) {
+    for (const unit of state.units) {
+      const foes = state.units.filter((u) => u.owner !== unit.owner)
+      if (foes.length === 0) continue
+      let sum = 0
+      for (const foe of foes) sum += baseDamage(unit.type, foe.type, data)
+      score += (unit.owner === playerId ? 1 : -1) * (sum / foes.length) * counterValue
+    }
+  }
+
+  // E3（切片 3）：远程单位的安全站位 —— "我能打到你、你打不到我"（放风筝）。
+  // 现状是 AI 会拿投石车/弓兵贴身去拱王城（诊断 §4 点名的问题）。
+  if (rangedSafety > 0) {
+    for (const unit of state.units) {
+      const type = unitType(unit.type, data)
+      if (type.rangeMax < 2) continue // 只对远程单位有意义
+      const foes = state.units.filter((u) => u.owner !== unit.owner)
+      if (foes.length === 0) continue
+      let canShoot = false
+      let canBeShot = false
+      for (const foe of foes) {
+        const foeType = unitType(foe.type, data)
+        const d = chebyshevDistance(unit, foe)
+        if (d >= type.rangeMin && d <= type.rangeMax) canShoot = true
+        if (d <= foeType.rangeMax) canBeShot = true
+      }
+      if (canShoot && !canBeShot) {
+        score += (unit.owner === playerId ? 1 : -1) * type.cost * rangedSafety
+      }
+    }
+  }
+
+  // E4（切片 3）：暴露面 —— **只在"会被打死"这一档**触发。
+  // 切片 1 的静态威胁项用乘性大权重，多项相乘达 ±几千分、压过材料分，实测 0/16 胜。
+  // 这里严格限定：加法、单档（预计承受伤害 ≥ 自身血量才触发）、小权重。
+  if (exposure > 0) {
+    for (const unit of state.units) {
+      const type = unitType(unit.type, data)
+      let incoming = 0
+      for (const foe of state.units) {
+        if (foe.owner === unit.owner) continue
+        const foeType = unitType(foe.type, data)
+        if (chebyshevDistance(foe, unit) > foeType.move + foeType.rangeMax) continue
+        incoming += computeDamage(state, foe, unit, data)
+      }
+      if (incoming >= unit.hp) {
+        score += (unit.owner === playerId ? -1 : 1) * type.cost * exposure
+      }
     }
   }
 
