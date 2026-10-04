@@ -22,7 +22,7 @@ const DEV = import.meta.env.DEV
 
 export interface RoomActions {
   /** 加入房间；password 为可选房间密码（参与 WebRTC 密钥派生，密码不一致则互相看不见） */
-  join: (roomCode: string, nickname: string, password?: string) => void
+  join: (roomCode: string, nickname: string, password?: string, asSpectator?: boolean) => void
   leave: () => void
   setReady: (ready: boolean) => void
   setNickname: (nickname: string) => void
@@ -36,6 +36,8 @@ export interface RoomActions {
   takeOverDisconnectedTurn: () => void
   /** 房主：选择地图（null = 按人数自动） */
   setMap: (mapId: string | null) => void
+  /** 房主：设置 AI 补位（本局总共几个席位、含真人；0 = 不补位） */
+  setAiSlots: (count: number) => void
   /** 手动直连：开始配对（host = 生成邀请码，guest = 等待粘贴邀请码） */
   startManualPairing: (roomCode: string, role: 'host' | 'guest', nickname: string) => void
   /** 手动直连：提交对方的连接码 */
@@ -78,6 +80,8 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     myTurn: false,
     paused: false,
     pausedReason: 'none',
+    aiSlotCount: 0,
+    spectating: false,
     canSkipTurn: false,
     canTakeOver: false,
     takeoverPlayerId: null,
@@ -121,6 +125,8 @@ export function useRoom(): UseRoomResult {
   const settings = useRef({ kind: initialKind, strategy: 'mqtt' as SignalStrategy })
   /** 当前房间密码（切换信令策略后重新加入时要复用；刷新后从 sessionStorage 恢复） */
   const passwordRef = useRef<string | null>(storedRoomPassword)
+  /** 观战身份：刷新/重连时要沿用，否则回来就"从观战变成参战"了 */
+  const spectatorRef = useRef(false)
 
   // 卸载（含 StrictMode 的模拟卸载）时释放会话；autoJoined 复位以便重新自动重连
   const enqueueTeardown = useCallback((session: RoomSession | null) => {
@@ -185,16 +191,19 @@ export function useRoom(): UseRoomResult {
   )
 
   const join = useCallback(
-    (roomCode: string, nickname: string, password?: string) => {
+    (roomCode: string, nickname: string, password?: string, asSpectator = false) => {
       const clean = nickname.trim().slice(0, 16) || identity.nickname
       const key = password?.trim().slice(0, 64) || null
       passwordRef.current = key
+      spectatorRef.current = asSpectator
       if (!identity.ephemeral) {
         writeStoredPlayerId(identity.playerId)
         writeStoredNickname(clean)
       }
       writeLastRoom(roomCode, key)
-      void startSession(roomCode, clean).then((session) => session.join(roomCode, key ?? undefined))
+      void startSession(roomCode, clean).then((session) =>
+        session.join(roomCode, key ?? undefined, asSpectator),
+      )
     },
     [identity, startSession],
   )
@@ -231,6 +240,7 @@ export function useRoom(): UseRoomResult {
   /** 让 AI 代打掉线玩家的这一整个回合（房主专用；逐拍推进，掉线者回来即交还） */
   const takeOverDisconnectedTurn = useCallback(() => sessionRef.current?.takeOverDisconnectedTurn(), [])
   const setMap = useCallback((mapId: string | null) => sessionRef.current?.setMap(mapId), [])
+  const setAiSlots = useCallback((count: number) => sessionRef.current?.setAiSlots(count), [])
   const startManualPairing = useCallback(
     (roomCode: string, role: 'host' | 'guest', nickname: string) => {
       const clean = roomCode
@@ -283,6 +293,7 @@ export function useRoom(): UseRoomResult {
       skipDisconnectedTurn,
       takeOverDisconnectedTurn,
       setMap,
+      setAiSlots,
       startManualPairing,
       submitManualCode,
       retryConnection,

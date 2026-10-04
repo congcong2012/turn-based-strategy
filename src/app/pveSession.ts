@@ -262,6 +262,9 @@ export function createPveSession(options: PveSessionOptions): PveSession {
       peerCount: 0,
       game: state,
       mapId: match.mapId,
+      // 单人练习的对手本来就是 AI（它们直接在 match.seatIds 里），不存在"补位"概念
+      aiSlotCount: 0,
+      spectating: false,
       passwordEnabled: false,
       connection,
       transportStatus: status,

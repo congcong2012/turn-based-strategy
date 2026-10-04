@@ -21,6 +21,13 @@ export type LobbyPlayer = {
   ready: boolean
   isHost: boolean
   connected: boolean
+  /**
+   * 观战者：**不占对局席位**、不能发指令、只接收广播（只读客户端）。
+   *
+   * 本作**没有战争迷雾**，所以观战不需要按玩家裁剪信息 —— 观战者看到的
+   * 就是任意一名玩家都能看到的全部内容，不存在"看到不该看的"。
+   */
+  spectator?: boolean
 }
 
 /** 房主广播的权威房间名单快照 */
@@ -33,6 +40,8 @@ export type LobbySnapshot = {
   canStart: boolean
   /** 房主选择的地图（null = 开局时按人数自动挑） */
   mapId: string | null
+  /** AI 补位：本局总共几个席位（含真人；0 = 不补位） */
+  aiSlotCount: number
   /** 房主侧单调递增版本号：客户端据此丢弃过期的重排快照 */
   rev: number
 }
@@ -42,7 +51,7 @@ export type Wire =
   | { t: 'game'; from: PlayerId; state: GameState; events?: GameEvent[] }
   | { t: 'cmd'; from: PlayerId; cmd: Command }
   | { t: 'cmdRejected'; from: PlayerId; code: ErrorCode }
-  | { t: 'hello'; from: PlayerId; nickname: string; joinedAt: number }
+  | { t: 'hello'; from: PlayerId; nickname: string; joinedAt: number; spectator?: boolean }
   /**
    * hostHello 带 joinedAt：接收方无需先收到对方的 hello 也能裁决竞态（见 ADR-3 / ADR-19）。
    * `epoch` = 房主权任期号：**任期大的赢**，用于游戏内主机迁移时压住"带着旧局面的原房主"。

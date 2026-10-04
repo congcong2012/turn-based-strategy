@@ -119,3 +119,80 @@ test.describe('多人局（本地传输，3 人）', () => {
     await expect(carol.getByTestId('game-over')).toContainText('败北')
   })
 })
+
+test.describe('AI 补位与观战（本地传输）', () => {
+  test('★ AI 补位：2 名真人选「共 4 方」→ 开局多出两个 AI，且 AI 自己会部署', async ({ context }) => {
+    const alice = await context.newPage()
+    const bob = await context.newPage()
+    await alice.goto(localUrl('ab-a', '甲将军'))
+    await joinRoom(alice, ROOM, '甲将军')
+    await waitForHost(alice)
+    await bob.goto(localUrl('ab-b', '乙将军'))
+    await joinRoom(bob, ROOM, '乙将军')
+    await expect(alice.getByTestId('player-item')).toHaveCount(2)
+
+    // 房主把 AI 补位设成"共 4 方"
+    await alice.getByTestId('ai-slots-select').selectOption('4')
+    await expect(alice.getByTestId('ai-slots-hint')).toContainText('补 2 个 AI')
+    // 客机也能看到这个设置（走 lobby 快照同步）
+    await expect(bob.getByTestId('ai-slots-label')).toContainText('共 4 方')
+
+    await alice.getByTestId('ready-button').click()
+    await bob.getByTestId('ready-button').click()
+    await expect(alice.getByTestId('start-button')).toBeEnabled()
+    await alice.getByTestId('start-button').click()
+    await expect(alice.getByTestId('phase-label')).toHaveText('部署')
+
+    // 4 方：2 真人 + 2 AI
+    await expect.poll(async () => (await stateOf(alice)).players.length, { timeout: 15_000 }).toBe(4)
+    const players = (await stateOf(alice)).players
+    expect(players.filter((p) => p.startsWith('ai-'))).toHaveLength(2)
+    expect((await stateOf(bob)).players).toEqual(players)
+
+    // AI 席位自动完成部署（不需要任何人操作）
+    await expect
+      .poll(
+        async () => {
+          const state = await stateOf(alice)
+          return players.filter((p) => p.startsWith('ai-')).every((p) => (state.units.filter((u) => u.owner === p).length ?? 0) > 0)
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(true)
+  })
+
+  test('★ 观战：不占席位、能看到对局，但界面上没有可操作按钮', async ({ context }) => {
+    const alice = await context.newPage()
+    const bob = await context.newPage()
+    await alice.goto(localUrl('sp-a', '甲将军'))
+    await joinRoom(alice, ROOM, '甲将军')
+    await waitForHost(alice)
+    await bob.goto(localUrl('sp-b', '乙将军'))
+    await joinRoom(bob, ROOM, '乙将军')
+    await expect(alice.getByTestId('player-item')).toHaveCount(2)
+
+    await alice.getByTestId('ready-button').click()
+    await bob.getByTestId('ready-button').click()
+    await expect(alice.getByTestId('start-button')).toBeEnabled()
+    await alice.getByTestId('start-button').click()
+    await expect(alice.getByTestId('phase-label')).toHaveText('部署')
+
+    // 第三人以观战身份进入（此时房间已有 2 人、对局已开始）
+    const watcher = await context.newPage()
+    await watcher.goto(localUrl('sp-c', '看客'))
+    await watcher.getByTestId('nickname-input').fill('看客')
+    await watcher.getByTestId('room-code-input').fill(ROOM)
+    await watcher.getByTestId('spectate-button').click()
+
+    // 观战者能看到对局（本作没有战争迷雾），并有明确的只读标识
+    await expect(watcher.getByTestId('phase-label')).toHaveText('部署', { timeout: 20_000 })
+    await expect(watcher.getByTestId('spectator-badge')).toBeVisible()
+    await expect(watcher.getByTestId('spectator-hint')).toContainText('只能看')
+    // 观战者不能放兵（部署面板里的兵种按钮一律不可用）
+    await expect(watcher.getByTestId('deploy-sword')).toBeDisabled()
+    await expect(watcher.getByTestId('deploy-done')).toBeDisabled()
+
+    // 参战席位不受影响：仍然是 2 名玩家
+    expect((await stateOf(alice)).players).toEqual(['sp-a', 'sp-b'])
+  })
+})

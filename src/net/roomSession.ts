@@ -22,6 +22,7 @@ import {
   markConnected,
   markDisconnected,
   removePlayer,
+  setAiSlotCount as lobbySetAiSlotCount,
   setMapId as lobbySetMapId,
   setNickname as lobbySetNickname,
   setReady as lobbySetReady,
@@ -66,8 +67,24 @@ const HELLO_RETRY_MS = 3000
 const TAKEOVER_STEP_MS = 450
 /** 托管一个回合最多走多少步（兜底，绝不死循环） */
 const TAKEOVER_MAX_STEPS = MAX_AI_STEPS
-/** 托管用哪一档 AI：取「普通」—— 不掉线的人既不该被更强的 AI 惩罚，也不该被白送 */
+/**
+ * 用哪一档 AI 代替真人行动（掉线托管 + AI 补位）。
+ * 取「普通」：不掉线的人既不该被更强的 AI 惩罚，也不该被白送。
+ *
+ * 已预留"按房间配置"的位置（房主未来若要开"困难 AI 补位"，只需把这里换成
+ * `lobby.aiDifficulty` 之类的字段，UI 加一个下拉即可）。
+ */
 const TAKEOVER_DIFFICULTY: Difficulty = 'normal'
+
+/**
+ * AI 补位席位的 id 前缀。
+ *
+ * 为什么用 `ai-*`：单人练习（`pveSession`）已经在用同一套命名（`ai-0/1/2`），
+ * 而 `isPlayerConnected()` 是"未知玩家一律视为在线"——
+ * 于是**大厅里根本不存在的 AI 席位天然会被当作"已连接"**，不需要给 `lobby.players` 塞假玩家。
+ * 这是本功能能做到"最小侵入"的关键。
+ */
+const AI_SEAT_PREFIX = 'ai-'
 const HELLO_MAX_ATTEMPTS = 8
 
 export interface RoomView {
@@ -91,6 +108,13 @@ export interface RoomView {
   game: GameState | null
   /** 房主选择的地图（null = 自动） */
   mapId: string | null
+  /**
+   * AI 补位：本局总共几个席位（含真人；0 = 不补位）。
+   * 房主在大厅可调，开局时一次性生效（之后随 lobby 快照同步给所有人）。
+   */
+  aiSlotCount: number
+  /** 本会话是不是观战者（只读：不占席位、不能操作） */
+  spectating: boolean
   /** 是否启用了房间密码（只暴露布尔值，不回显明文） */
   passwordEnabled: boolean
   /** 用户可见的连接状态（连接中 / 已连接 / 等待对手 / 重连中 / 失败） */
@@ -138,6 +162,11 @@ export interface RoomSessionOptions {
   strategy: SignalStrategy
   kind: TransportKind
   transportFactory: TransportFactory
+  /**
+   * 手动直连的传输工厂（测试可注入假实现；默认走真实 WebRTC）。
+   * 抽这个口子是为了能单测"连接成功那一刻的相位竞争"——真实 WebRTC 在单测环境里跑不起来。
+   */
+  manualTransportFactory?: (options: { role: ManualRole; handlers: TransportHandlers }) => ManualTransport
   now?: () => number
   tickMs?: number
   /** 房主侧对局持久化用的存储（默认 localStorage；测试可注入内存实现） */
@@ -147,13 +176,16 @@ export interface RoomSessionOptions {
 
 export interface RoomSession {
   getView: () => RoomView
-  join: (roomCode: string, password?: string) => Promise<void>
+  /** 加入房间；`asSpectator` = 以观战身份进入（不占席位、不能操作） */
+  join: (roomCode: string, password?: string, asSpectator?: boolean) => Promise<void>
   /** 明确离开房间：会清掉房主侧的持久化对局（刷新/关闭标签页请用 dispose） */
   leave: () => Promise<void>
   setReady: (ready: boolean) => void
   setNickname: (nickname: string) => void
   /** 房主：选择地图（null = 按人数自动） */
   setMap: (mapId: string | null) => void
+  /** 设置 AI 补位（本局总共几个席位、含真人；0 = 不补位）。仅房主有效 */
+  setAiSlots: (count: number) => void
   /** 房主：LOBBY → DEPLOY，创建权威对局状态 */
   startGame: () => void
   /** 任何玩家：发出对局指令（房主本地校验，客户端发给房主校验） */
@@ -200,6 +232,16 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   let takeover: { playerId: PlayerId; steps: number } | null = null
   let takeoverTimer: ReturnType<typeof setTimeout> | null = null
   /**
+   * AI 补位：本局总共几个席位（含补位的 AI；0 = 关闭，只有真人）。
+   * 房主在大厅设置，开局时一次性决定，之后随 lobby 快照同步给所有人。
+   */
+  let aiSlotCount = 0
+  /**
+   * 观战模式：本会话是**只读客户端** —— 不占对局席位、不发指令、不参与准备。
+   * 本作没有战争迷雾，观战者看到的与任何一名玩家相同，因此不需要裁剪信息。
+   */
+  let spectating = false
+  /**
    * 会话已作废（leave 之后）。
    * 为什么需要它：join() 里 `await transportFactory(...)` 可能要几百毫秒（动态 import + 建连），
    * 若这期间发生了 leave（React StrictMode 的"挂载→卸载→再挂载"、用户秒点离开），
@@ -236,8 +278,27 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   }
 
   function currentPlayers(): LobbyPlayer[] {
-    if (lobby) return lobby.players
-    return fallbackPlayers()
+    if (!lobby) return fallbackPlayers()
+    // 对局中：把 AI 补位席位也列出来（计分板/战报需要它们有名字，
+    // 否则 GameScreen 会退化成显示 `ai-2` 这种 id 前缀）
+    const aiSeats: LobbyPlayer[] = (game?.players ?? [])
+      .filter(isAiSeat)
+      .map((playerId) => ({
+        playerId,
+        nickname: aiSeatName(playerId),
+        ready: true,
+        isHost: false,
+        connected: true,
+      }))
+    return [...lobby.players, ...aiSeats]
+  }
+
+  /** AI 补位席位的显示名：与单人练习的叫法一致（电脑甲/乙/丙），按座位序派生 */
+  function aiSeatName(playerId: PlayerId): string {
+    const seat = Number(playerId.slice(AI_SEAT_PREFIX.length))
+    const ordinal = Number.isFinite(seat) ? seat : 0
+    const labels = ['电脑甲', '电脑乙', '电脑丙']
+    return labels[ordinal] ?? '电脑' + (ordinal + 1)
   }
 
   function isHost(): boolean {
@@ -248,6 +309,11 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     if (lobby) return lobby.canStart
     const online = currentPlayers().filter((p) => p.connected)
     return online.length >= 2 && online.every((p) => p.ready)
+  }
+
+  /** 该席位是不是 AI 补位（不是真人，永远"在线"，由房主的 AI 驱动） */
+  function isAiSeat(playerId: PlayerId): boolean {
+    return playerId.startsWith(AI_SEAT_PREFIX)
   }
 
   function isPlayerConnected(playerId: PlayerId): boolean {
@@ -305,6 +371,9 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       peerCount: transport ? transport.getPeers().length : 0,
       game,
       mapId: lobby?.mapId ?? null,
+      // 以 lobby 快照为准：客户端只能从快照得知这个设置（房主侧两者本就一致）
+      aiSlotCount: lobby?.aiSlotCount ?? aiSlotCount,
+      spectating,
       passwordEnabled: roomPassword !== null,
       myTurn: game !== null && game.phase === 'PLAYING' && game.players[game.turnIndex] === selfId,
       paused: pausedReason !== 'none',
@@ -395,7 +464,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       emit()
       return
     }
-    if (isPlayerConnected(actor)) {
+    // AI 补位席位永远由 AI 驱动（不检查连接状态）；真人席位则一旦重连就交还控制权
+    if (!isAiSeat(actor) && isPlayerConnected(actor)) {
       notice = '掉线玩家已重连，控制权已交还'
       stopTakeover()
       emit()
@@ -432,14 +502,43 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     scheduleTakeoverStep()
   }
 
+  /**
+   * 部署阶段把 AI 席位一次性部署完（含 `deployDone`）。
+   *
+   * 与行动阶段的逐拍推进不同，部署是"开盘前的摆子"，一口气做完更利落
+   * （也是 PVE 里 `pumpDeploy` 的做法）。
+   */
+  function pumpDeployAi(): void {
+    if (!isHost() || !game || game.phase !== 'DEPLOY') return
+    let guard = 0
+    while (guard < 64) {
+      guard += 1
+      const pending = game.players.find(
+        (p) => p.startsWith(AI_SEAT_PREFIX) && !game?.deploy[p]?.done,
+      )
+      if (!pending) return
+      if (!runCommand(pending, nextCommand(game, pending, TAKEOVER_DIFFICULTY))) {
+        // 指令被拒（理论上不该发生）：停下，别死循环
+        return
+      }
+    }
+  }
+
   function beginTakeover(): void {
     if (disposed || !isHost() || !game || game.phase !== 'PLAYING') return
     const current = game.players[game.turnIndex]
-    if (isPlayerConnected(current) || takeover !== null) return
+    // AI 补位席位不需要"是否掉线"的判断：它本来就该由 AI 走
+    if (!isAiSeat(current) && isPlayerConnected(current)) return
+    if (takeover !== null) return
     takeover = { playerId: current, steps: 0 }
-    notice = '掉线玩家的回合交给 AI 代打…'
+    notice = takeoverNotice(current)
     emit()
     scheduleTakeoverStep()
+  }
+
+  /** 托管/代打开始时的提示文案（AI 补位与掉线托管用不同的说法） */
+  function takeoverNotice(playerId: PlayerId): string {
+    return isAiSeat(playerId) ? 'AI 正在行动…' : '掉线玩家的回合交给 AI 代打…'
   }
 
   /** 执行一条指令（房主侧）。返回**是否被接受** —— 掉线托管要靠它判断该不该继续。 */
@@ -505,7 +604,10 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       lastHelloAt = now()
       helloAttempts += 1
     }
-    transport?.send({ t: 'hello', from: selfId, nickname, joinedAt: election?.joinedAt ?? now() }, to)
+    transport?.send(
+      { t: 'hello', from: selfId, nickname, joinedAt: election?.joinedAt ?? now(), spectator: spectating },
+      to,
+    )
   }
 
   function broadcastLobby(): void {
@@ -626,16 +728,22 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
           )
           // 若是掉线玩家回来了：恢复席位（对局进行中我们保留了他的座位）
           lobby = markConnected(lobby, msg.from)
+          aiSlotCount = lobby.aiSlotCount
           // 若对局已开始，补发完整快照（断线重连 / 中途加入）
           if (game) transport?.send({ t: 'game', from: selfId, state: game }, peerId)
           else maybeRestoreGame()
           const known = hasPlayer(lobby, msg.from)
-          if (!known && isFull(lobby)) {
+          // 观战者不占席位：房间满员时也放行（否则「满员也能观战」的承诺不成立）
+          if (!known && msg.spectator !== true && isFull(lobby)) {
             transport?.send({ t: 'roomFull', from: selfId }, peerId)
             notice = '有玩家尝试加入，但房间已满'
             break
           }
-          lobby = upsertPlayer(lobby, { playerId: msg.from, nickname: msg.nickname }, { resetReady: reconnected })
+          lobby = upsertPlayer(
+            lobby,
+            { playerId: msg.from, nickname: msg.nickname, spectator: msg.spectator === true },
+            { resetReady: reconnected },
+          )
           broadcastLobby()
         }
         break
@@ -761,11 +869,35 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     },
   }
 
+  /**
+   * 统一入口：当前该由 AI 行动时，把它交给托管调度去走。
+   *
+   * 覆盖两种情形：
+   *  1. **AI 补位席位**（`ai-*`）—— 始终由 AI 驱动；
+   *  2. **真人掉线**—— 但"托管"是房主点的动作（`takeOverDisconnectedTurn`），
+   *     所以这里**不自动**替掉线者行动，只处理 AI 席位，避免"房主没点就被 AI 接管"。
+   *
+   * 部署阶段用 `pumpDeployAi` 一口气做完，不进逐拍调度。
+   */
+  function pumpAiSeats(): void {
+    if (!isHost() || !game || takeover !== null) return
+    if (game.phase === 'DEPLOY') {
+      pumpDeployAi()
+      emit()
+      return
+    }
+    if (game.phase !== 'PLAYING') return
+    const actor = game.players[game.turnIndex]
+    if (!actor || !isAiSeat(actor)) return
+    beginTakeover()
+  }
+
   function runTick(): void {
     if (!election) return
     const result = electionTick(election, now())
     election = result.state
     applyEffects(result.effects)
+    pumpAiSeats()
 
     // 信令慢启动 / 房间继承兜底：出现下面任一情况就重发 hello
     //   1) 还没握手到任何 peer（信令慢启动）
@@ -853,9 +985,10 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   return {
     getView: buildView,
 
-    async join(code: string, password?: string): Promise<void> {
+    async join(code: string, password?: string, asSpectator = false): Promise<void> {
       if (disposed) return
       closed = false
+      spectating = asSpectator
       const normalized = normalizeRoomCode(code)
       if (!isValidRoomCode(normalized)) {
         recordError('房间码必须是 6 位（仅使用易辨识字符）')
@@ -883,7 +1016,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         return
       }
       resetForRoom(normalized)
-      const created = createManualTransport({ role: pairingRole, handlers })
+      const created = (options.manualTransportFactory ?? createManualTransport)({ role: pairingRole, handlers })
       if (disposed || closed) {
         await created.leave()
         return
@@ -920,15 +1053,28 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       try {
         if (pairing.role === 'guest') {
           const answerCode = await mt.acceptOfferCode(code)
-          manual = { ...pairing, code: answerCode, phase: 'need-answer', error: null }
+          manual = { ...(manual ?? pairing), code: answerCode, phase: 'need-answer', error: null }
           notice = '把上面的应答码发回给房主，等待他粘贴'
         } else {
           await mt.acceptAnswerCode(code)
-          manual = { ...pairing, phase: 'connecting', error: null }
+          // ⚠️ acceptAnswerCode 会一直等到数据通道打开；而通道打开的那一刻，
+          // onStatus('connected') 已经把相位推进到 'connected'。
+          // 所以这里必须基于**最新**状态收尾，绝不能用 await 之前的旧快照覆盖 ——
+          // 否则会把 'connected' 打回 'connecting'，房主页面从房间视图退回"加入表单"且再也回不去
+          // （E2E 里表现为"等待开始按钮超时 / 按钮被从 DOM 摘掉"，曾被误判为环境抖动）。
+          const latest = manual ?? pairing
+          if (latest.phase === 'connected') {
+            manual = { ...latest, error: null }
+          } else if (status === 'failed') {
+            // 等通道超时：waitForOpen 会先报 'failed'，这里把相位落成失败态（而不是永远挂在"建立中"）
+            manual = { ...latest, phase: 'failed', error: statusDetail }
+          } else {
+            manual = { ...latest, phase: 'connecting', error: null }
+          }
         }
       } catch (err) {
         const message = String((err as Error)?.message ?? err)
-        manual = { ...pairing, phase: 'failed', error: message }
+        manual = { ...(manual ?? pairing), phase: 'failed', error: message }
         error = message
       }
       emit()
@@ -972,17 +1118,30 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
     startGame(): void {
       if (!isHost() || !canStart()) return
-      const order = (lobby?.players ?? []).filter((p) => p.connected).map((p) => p.playerId)
+      // ⚠️ 必须排除观战者：他们**不占对局席位**（否则会被当成参战玩家，AI/胜负/计分都算错人）
+      const order = (lobby?.players ?? [])
+        .filter((p) => p.connected && !p.spectator)
+        .map((p) => p.playerId)
       if (order.length < 2) {
         error = '至少需要 2 名玩家才能开始'
         emit()
         return
       }
+      // AI 补位：房主选了就把席位补到目标数（真人优先入座，多出来的由 AI 坐）
+      const targetSlots = lobby?.aiSlotCount ?? aiSlotCount
+      if (targetSlots > 0) {
+        for (let seat = order.length; seat < targetSlots; seat += 1) {
+          order.push(AI_SEAT_PREFIX + seat)
+        }
+      }
       const mapId = lobby?.mapId ?? defaultMapFor(order.length)
       game = createGame(mapId, order)
       if (election) election = electionSetPhase(election, 'DEPLOY')
       if (lobby) lobby = { ...lobby, phase: 'DEPLOY' }
-      notice = '进入部署阶段：在己方部署区放置初始部队'
+      notice =
+        targetSlots > 0
+          ? '进入部署阶段：' + targetSlots + ' 个席位由 AI 补位，在己方部署区放置初始部队'
+          : '进入部署阶段：在己方部署区放置初始部队'
       transport?.send({ t: 'game', from: selfId, state: game })
       broadcastLobby()
       emit()
@@ -1007,8 +1166,23 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       emit()
     },
 
+    setAiSlots(count: number): void {
+      if (!isHost() || !lobby) return
+      lobby = lobbySetAiSlotCount(lobby, count)
+      aiSlotCount = lobby.aiSlotCount
+      // rev 由 broadcastLobby 统一 +1（这里别自己加，否则客户端会跳过一版快照）
+      broadcastLobby()
+      emit()
+    },
+
     sendCommand(cmd: Command): void {
       if (!game) return
+      // 观战者是只读的：不接受任何操作（连认输都不行——它本来就不在局里）
+      if (spectating) {
+        recordError('观战模式下不能操作')
+        emit()
+        return
+      }
       // 提示条是"最近发生了什么"的状态行：我自己一操作，旧提示就该让位
       if (notice !== null) {
         notice = null

@@ -59,6 +59,147 @@ describe('对局指令的房间集成（房主权威）', () => {
     expect(bob.view.isHost).toBe(false)
   })
 
+  it('★ AI 补位：2 名真人 + 补到 4 方 → 开局真的多出两个 AI 席位，且 AI 会自动部署', async () => {
+    const { alice, bob } = await twoPeers(hub)
+    alice.session.setReady(true)
+    bob.session.setReady(true)
+    await vi.advanceTimersByTimeAsync(100)
+
+    // 房主选"本局共 4 方"
+    alice.session.setAiSlots(4)
+    await vi.advanceTimersByTimeAsync(100)
+    // 客户端也看得到这个设置
+    expect(bob.view.aiSlotCount).toBe(4)
+
+    alice.session.startGame()
+    await vi.advanceTimersByTimeAsync(100)
+
+    const players = alice.view.game?.players ?? []
+    expect(players).toHaveLength(4)
+    expect(players.filter((p) => p.startsWith('ai-'))).toHaveLength(2)
+    // 真人仍是原来那两个，顺序不变（出手次序可预期）
+    expect(players.slice(0, 2)).toEqual(['alice', 'bob'])
+    // 双方看到同一份状态
+    expect(bob.view.game?.players).toEqual(players)
+
+    // AI 席位在部署阶段应当自动完成部署（不需要房主点任何东西）
+    await vi.advanceTimersByTimeAsync(200)
+    const aiSeats = players.filter((p) => p.startsWith('ai-'))
+    for (const seat of aiSeats) {
+      expect(alice.view.game?.deploy[seat]?.done, seat + ' 应已自动部署完毕').toBe(true)
+      expect(
+        alice.view.game?.units.filter((u) => u.owner === seat).length,
+        seat + ' 应已放下部队',
+      ).toBeGreaterThan(0)
+    }
+    // 真人不会被自动部署（他们自己点确认）
+    expect(alice.view.game?.deploy['alice']?.done).toBe(false)
+  })
+
+  it('★ AI 补位：AI 席位的名字会出现在玩家列表里（不是裸露的 ai-2）', async () => {
+    const { alice, bob } = await twoPeers(hub)
+    // 双方都得准备才能开局（AI 补位补的是"缺席的人"，不是"没准备好的人"）
+    alice.session.setReady(true)
+    bob.session.setReady(true)
+    await vi.advanceTimersByTimeAsync(100)
+    alice.session.setAiSlots(3)
+    await vi.advanceTimersByTimeAsync(100)
+    alice.session.startGame()
+    await vi.advanceTimersByTimeAsync(100)
+
+    const aiEntry = alice.view.players.find((p) => p.playerId.startsWith('ai-'))
+    expect(aiEntry).toBeDefined()
+    expect(aiEntry?.nickname).toBe('电脑丙') // 座位 2 → 电脑丙（甲/乙/丙 按座位序）
+    expect(aiEntry?.connected).toBe(true)
+  })
+
+  it('AI 补位关闭时行为与以前完全一致（只有真人）', async () => {
+    const { alice, bob } = await twoPeers(hub)
+    alice.session.setReady(true)
+    bob.session.setReady(true)
+    await vi.advanceTimersByTimeAsync(100)
+    alice.session.startGame()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(alice.view.game?.players).toEqual(['alice', 'bob'])
+  })
+
+  it('★ 观战：不占席位、不阻塞开局、收到完整状态但**不能操作**', async () => {
+    const { alice, bob } = await twoPeers(hub)
+    alice.session.setReady(true)
+    bob.session.setReady(true)
+    await vi.advanceTimersByTimeAsync(100)
+
+    // 第三个人以观战身份进来
+    const watcher = makePeer(hub, 'watcher', '看客')
+    await watcher.session.join(ROOM, undefined, true)
+    await vi.advanceTimersByTimeAsync(200)
+
+    // 观战者不占席位：参战人数仍是 2，开局条件不受影响
+    expect(watcher.view.spectating).toBe(true)
+    expect(alice.view.canStart).toBe(true)
+    expect(alice.view.players.filter((p) => p.spectator)).toHaveLength(1)
+    expect(alice.view.players.find((p) => p.playerId === 'watcher')?.nickname).toBe('看客')
+
+    alice.session.startGame()
+    await vi.advanceTimersByTimeAsync(100)
+
+    // 对局里没有观战者的席位（玩家数仍是 2）
+    expect(alice.view.game?.players).toEqual(['alice', 'bob'])
+    // 但观战者能收到完整状态（本作没有战争迷雾，观战看到的就是玩家看到的）
+    expect(watcher.view.game?.players).toEqual(['alice', 'bob'])
+    expect(watcher.view.game?.phase).toBe('DEPLOY')
+
+    // ★ 只读：观战者发指令一律被拒，且局面不变
+    const before = JSON.stringify(watcher.view.game)
+    watcher.session.sendCommand({ type: 'deploy', unitType: 'sword', x: 2, y: 0 } as never)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(watcher.view.error).toContain('观战')
+    expect(JSON.stringify(alice.view.game)).toBe(before)
+  })
+
+  it('观察者刷新后仍是观战者（不会变成参战）', async () => {
+    const { alice, bob } = await twoPeers(hub)
+    alice.session.setReady(true)
+    bob.session.setReady(true)
+    await vi.advanceTimersByTimeAsync(100)
+
+    const watcher = makePeer(hub, 'watcher', '看客')
+    await watcher.session.join(ROOM, undefined, true)
+    await vi.advanceTimersByTimeAsync(200)
+    alice.session.startGame()
+    await vi.advanceTimersByTimeAsync(100)
+
+    // 重连（模拟刷新）：同样以观战身份回来
+    const again = makePeer(hub, 'watcher', '看客')
+    await again.session.join(ROOM, undefined, true)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(again.view.spectating).toBe(true)
+    expect(alice.view.game?.players).toEqual(['alice', 'bob'])
+  })
+
+  it('★ 观战：房间满员（4 名真人）时观战者仍能进入，且不占席位', async () => {
+    const { alice } = await twoPeers(hub)
+    const carl = makePeer(hub, 'carl', '丙')
+    await carl.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(200)
+    const dave = makePeer(hub, 'dave', '丁')
+    await dave.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(200)
+    // 4 名真人已坐满
+    expect(alice.view.players.filter((p) => p.connected && !p.spectator)).toHaveLength(4)
+
+    const watcher = makePeer(hub, 'watcher', '看客')
+    await watcher.session.join(ROOM, undefined, true)
+    await vi.advanceTimersByTimeAsync(200)
+
+    // 没被「房间已满」打回：房主侧确实新增了一个观战席位
+    expect(watcher.view.notice ?? '').not.toContain('已满')
+    expect(alice.view.players.find((p) => p.playerId === 'watcher')?.spectator).toBe(true)
+    expect(watcher.view.spectating).toBe(true)
+    // 观战者不占席位：真人仍然是 4 个
+    expect(alice.view.players.filter((p) => p.connected && !p.spectator)).toHaveLength(4)
+  })
+
   it('客户端指令经房主校验后生效，非法指令被拒绝且状态不变', async () => {
     const { alice, bob } = await twoPeers(hub)
     alice.session.setReady(true)

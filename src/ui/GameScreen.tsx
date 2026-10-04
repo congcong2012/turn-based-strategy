@@ -188,8 +188,9 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
     setSelectedBuildingId(null)
   }, [])
 
-  // 单人模式不存在"房主掉线"，永不冻结
-  const frozen = mode === 'online' && view.pausedReason === 'host-offline'
+  // 单人模式不存在"房主掉线"，永不冻结。
+  // 观战者也算冻结：它的所有操作按钮都该是禁用的（只读模式下不能放兵/结束回合）。
+  const frozen = mode === 'online' && (view.pausedReason === 'host-offline' || view.spectating)
 
   // 进入部署阶段：自动把镜头对准己方部署区（避免"看不到自己的区域、点了却被告知不在部署区"）
   useEffect(() => {
@@ -349,6 +350,11 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
             单人练习
           </span>
         )}
+        {view.spectating ? (
+          <span className="hud-item" data-testid="spectator-badge" title="观战：不占席位、不能操作">
+            👁 观战中（只读）
+          </span>
+        ) : null}
         <button type="button" data-testid="sound-toggle" onClick={toggleSound} title="音效开关">
           {soundOn ? '🔊 音效' : '🔇 静音'}
         </button>
@@ -356,6 +362,13 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
           {mode === 'pve' ? '退出对局' : '离开'}
         </button>
       </header>
+
+      {/* 观战者：任何阶段都给一条明确的只读说明（这不是错误提示，是模式说明） */}
+      {view.spectating && mode === 'online' ? (
+        <div className="pause-banner soft" data-testid="spectator-hint">
+          <span>你在观战：只能看，不能操作（不占对局席位，房间满员也能进）。</span>
+        </div>
+      ) : null}
 
       {/* 联机：最近发生的事（例如"原房主掉线，你已接任房主"）。
           以前只在领地显示，于是接管这种关键提示对局中完全看不到。 */}
@@ -515,7 +528,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
                   type="button"
                   className="primary block"
                   data-testid="end-turn"
-                  disabled={!view.myTurn || frozen}
+                  disabled={view.spectating || !view.myTurn || frozen}
                   onClick={() => {
                     clearSelection()
                     actions.sendCommand({ type: 'endTurn' })

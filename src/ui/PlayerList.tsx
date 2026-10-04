@@ -30,6 +30,11 @@ export function PlayerList({ players, selfId }: PlayerListProps) {
             <span className="player-name">
               {player.nickname}
               {isSelf ? <span className="tag tag-self">你</span> : null}
+              {player.playerId.startsWith('ai-') ? (
+                <span className="tag tag-waiting" data-testid="ai-badge">
+                  AI
+                </span>
+              ) : null}
             </span>
             {player.isHost ? (
               <span className="tag tag-host" data-testid="host-badge">

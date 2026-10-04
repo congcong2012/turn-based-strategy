@@ -227,8 +227,17 @@ export function Lobby({
               >
                 加入房间
               </button>
+              <button
+                type="button"
+                data-testid="spectate-button"
+                disabled={!isValidRoomCode(code) || view.status === 'connecting'}
+                onClick={() => actions.join(code, nickname, password.trim() || undefined, true)}
+              >
+                👁 观战
+              </button>
               <span className="muted small">
                 同一个房间码 = 同一个房间；第一个进入的人自动成为房主，2–4 人均可开局。
+                「观战」不占席位、不能操作，只是看（房间满员时也能进）。
               </span>
             </div>
           ) : (
@@ -380,9 +389,38 @@ export function Lobby({
                 </span>
               )}
             </label>
+            <label className="field inline">
+              <span>AI 补位</span>
+              {view.isHost ? (
+                <select
+                  data-testid="ai-slots-select"
+                  value={view.aiSlotCount}
+                  onChange={(event) => actions.setAiSlots(Number(event.target.value))}
+                >
+                  <option value={0}>不补位（只和真人打）</option>
+                  {[2, 3, 4].map((n) => (
+                    <option key={n} value={n}>
+                      本局共 {n} 方（不足的用 AI 补）
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="muted small" data-testid="ai-slots-label">
+                  {view.aiSlotCount > 0 ? `共 ${view.aiSlotCount} 方（不足的用 AI 补）` : '不补位'}
+                </span>
+              )}
+            </label>
+            {view.isHost && view.aiSlotCount > 0 ? (
+              <p className="muted small" data-testid="ai-slots-hint">
+                当前 {view.players.filter((p) => p.connected).length} 名真人 →
+                开局会补 {Math.max(0, view.aiSlotCount - view.players.filter((p) => p.connected).length)} 个 AI。
+                AI 用「普通」档、与真人同规则（不加资源）。
+              </p>
+            ) : null}
+
             {view.isHost && selectedMap?.custom ? (
               <p className="muted small" data-testid="map-custom-hint">
-                这是自制地图：**其他玩家必须先导入同一张图**（把编辑器里的「分享码」发给他们粘贴），
+                这是自制地图：其他玩家必须先导入同一张图（把编辑器里的「分享码」发给他们粘贴），
                 否则他们那边没有这张地图、进不了这一局。
               </p>
             ) : null}

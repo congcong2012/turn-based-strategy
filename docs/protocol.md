@@ -32,12 +32,12 @@ joinRoom(config)                     // config.password 参与 genKey（SDP 派�
 
 | 类型 | 方向 | 载荷 | 说明 |
 | --- | --- | --- | --- |
-| `hello` | 双向（加入时广播 + peer 加入时单播） | `from, nickname, joinedAt` | 身份广播；收到后回一份（每个 peerId 只回一次） |
+| `hello` | 双向（加入时广播 + peer 加入时单播） | `from, nickname, joinedAt, spectator?` | 身份广播；`spectator: true` = 以**观战**身份加入（不占席位、只读，ADR-25）；收到后回一份（每个 peerId 只回一次） |
 | `hostHello` | 房主 → 全体/单播 | `from, hostId, joinedAt` | 房主声明；新人加入时房主立即单播，避免其误自任。`joinedAt` = 声明者的加入时刻，用于双方都自称房主时的竞态裁决（不依赖对方的 `hello` 是否已到） |
 | `lobby` | 房主 → 全体 | `from, lobby: LobbySnapshot` | **权威房间名单快照** |
 | `ready` | 客户端 → 房主 | `from, ready` | 准备意图（房主自己走本地路径） |
 | `nick` | 客户端 → 房主 | `from, nickname` | 改名意图 |
-| `roomFull` | 房主 → 单播 | `from` | 房间已满，被拒玩家自动退回加入界面 |
+| `roomFull` | 房主 → 单播 | `from` | 房间已满，被拒玩家自动退回加入界面（**观战者不受满员限制**，不占席位） |
 | `startHint` | 房主 → 全体 | `from` | 开始游戏提示（M1 只提示，M2 起改为进入 DEPLOY） |
 | `bye` | 双向 | `from` | 显式离开 |
 | `game` | 房主 → 全体/单播 | `from, state: GameState, events?: GameEvent[]` | **权威对局状态**：每次指令通过后广播；新玩家加入/重连时单播补发；`events` 供客户端渲染战报 |
