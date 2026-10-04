@@ -21,6 +21,7 @@ async function clickTile(page: Page, x: number, y: number): Promise<void> {
 async function stateOf(page: Page) {
   return page.evaluate(() => (globalThis as unknown as { __atGame: { getState: () => unknown } }).__atGame.getState()) as Promise<{
     phase: string
+    round: number
     turnIndex: number
     players: string[]
     units: Array<{ id: string; owner: string; x: number; y: number }>
@@ -128,5 +129,44 @@ test.describe('断线重连（本地传输）', () => {
     await expect(alice.getByTestId('end-turn')).toBeEnabled({ timeout: 20_000 })
     await expect(alice.getByTestId('pause-banner')).toHaveCount(0)
     expect((await stateOf(alice)).units.filter((u) => u.owner === 'p-b').length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('★ 主机迁移：房主掉线 → 剩余玩家自动接任并继续打；原房主回来降级、局面不回滚', async ({ context }) => {
+    const { alice, bob } = await startGameAndMove(context)
+    // 先确认初始权威：甲是房主，局内能看到 👑
+    await expect(alice.getByTestId('host-p-a')).toBeVisible()
+    await expect(bob.getByTestId('host-p-a')).toBeVisible()
+    const roundBefore = (await stateOf(bob)).round
+
+    // 房主（甲）整个页面关掉
+    await alice.close()
+
+    // 5 秒宽限期后：唯一的剩余玩家（乙）自动接任房主
+    await expect(bob.getByTestId('host-p-b')).toBeVisible({ timeout: 25_000 })
+    await expect(bob.getByTestId('host-p-a')).toHaveCount(0)
+    // 新房主要被明确告知（否则"我突然成了房主"很莫名）
+    await expect(bob.getByTestId('game-notice')).toContainText('接任房主')
+
+    // 现在是"掉线的甲"的回合 → 乙能替他托管；命令能生效本身就说明乙拿到了权威
+    await expect(bob.getByTestId('takeover-turn')).toBeVisible()
+    await bob.getByTestId('takeover-turn').click()
+    await expect(bob.getByTestId('end-turn')).toBeEnabled({ timeout: 30_000 })
+
+    // 乙走完自己的回合 → 回合数推进（新房主的广播真的在驱动对局）
+    await bob.getByTestId('end-turn').click()
+    await expect.poll(async () => (await stateOf(bob)).round, { timeout: 20_000 }).toBeGreaterThan(roundBefore)
+    const roundAfterMigration = (await stateOf(bob)).round
+
+    // 原房主（甲）重新打开页面回来：降级为普通玩家，并拿到**当前**局面（不回滚到掉线前）
+    const aliceAgain = await context.newPage()
+    await aliceAgain.goto(localUrl('p-a', '甲将军'))
+    // 中途回来的玩家会**直接进对局界面**（不会在大厅停留），所以不能用 joinRoom（它断言大厅的房间码显示）
+    await aliceAgain.getByTestId('nickname-input').fill('甲将军')
+    await aliceAgain.getByTestId('room-code-input').fill(ROOM)
+    await aliceAgain.getByTestId('join-button').click()
+    await expect(aliceAgain.getByTestId('phase-label')).toHaveText('行动', { timeout: 20_000 })
+    await expect(aliceAgain.getByTestId('host-p-b')).toBeVisible()
+    await expect(aliceAgain.getByTestId('host-p-a')).toHaveCount(0)
+    expect((await stateOf(aliceAgain)).round).toBe(roundAfterMigration)
   })
 })

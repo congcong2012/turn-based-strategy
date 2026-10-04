@@ -357,6 +357,14 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
         </button>
       </header>
 
+      {/* 联机：最近发生的事（例如"原房主掉线，你已接任房主"）。
+          以前只在领地显示，于是接管这种关键提示对局中完全看不到。 */}
+      {mode === 'online' && view.notice ? (
+        <div className="pause-banner soft" data-testid="game-notice">
+          <span>{view.notice}</span>
+        </div>
+      ) : null}
+
       {/* 单人模式：电脑回合进行中的明确反馈（联机模式下"不是我的回合"是另一个人类，不该这么提示） */}
       {mode === 'pve' && aiThinking ? (
         <div className="thinking-banner" data-testid="ai-thinking">
@@ -375,7 +383,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
             <div className="pause-banner" data-testid="pause-banner">
               <span>
                 {view.pausedReason === 'host-offline'
-                  ? '房主已断线，游戏暂停，等待其重连…（刷新页面不影响，房主回来后自动继续）'
+                  ? '房主已断线：5 秒内没回来，就由最早加入的玩家自动接任房主（局面不会丢，稍等片刻即可）'
                   : view.takeoverPlayerId
                     ? '这位玩家掉线中：AI 正在代打它的回合（他回来就立刻交还控制权）'
                     : '对手已断线，等待重连…（对局与你的操作都已保留）'}
@@ -476,6 +484,18 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
                     <div key={p} className="score-row" data-testid={'score-' + p}>
                       <span style={{ color: playerColor(game, p) }}>
                         {nameOf(view, p)}
+                        {view.players.find((entry) => entry.playerId === p)?.isHost ? (
+                          <span className="tag" data-testid={'host-' + p} title="房主：负责校验指令并广播局面">
+                            {' '}
+                            👑 房主
+                          </span>
+                        ) : null}
+                        {view.offlinePlayers.includes(p) ? (
+                          <span className="tag tag-waiting" data-testid={'offline-' + p}>
+                            {' '}
+                            掉线
+                          </span>
+                        ) : null}
                         {game.eliminated.includes(p) ? (
                           <span className="tag tag-waiting" data-testid={'eliminated-' + p}>
                             {' '}

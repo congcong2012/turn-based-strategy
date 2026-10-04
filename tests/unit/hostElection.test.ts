@@ -32,7 +32,8 @@ function clientView(
 ): ElectionState {
   let state = createElection(selfId, selfId, joinedAt)
   state = seen(state, rec(hostId, 0)).state
-  state = hostHello(state, hostId).state
+  // 真实房主自任时任期是 1，hostHello 会把它带过来
+  state = hostHello(state, hostId, 0, 1).state
   for (const [id, at] of others) state = seen(state, rec(id, at)).state
   return state
 }
@@ -133,7 +134,7 @@ describe('房主选举', () => {
     expect(types(result.effects)).toEqual(['steppedDown'])
   })
 
-  it('房主掉线超宽限期 → 剩余最早加入者接管（仅 LOBBY）', () => {
+  it('房主掉线超宽限期 → 剩余最早加入者接管，并拿到更高任期', () => {
     const p2 = gone(clientView('p2', 100, 'p1', [['p3', 200]]), 'p1').state
     const p3 = gone(clientView('p3', 200, 'p1', [['p2', 100]]), 'p1').state
 
@@ -146,9 +147,10 @@ describe('房主选举', () => {
     const earlyTick = tick(noticed.state, HOST_LOST_GRACE_MS - 1)
     expect(earlyTick.effects).toHaveLength(0)
 
-    // 过了宽限期：p2 是最早加入的剩余玩家 → 接管
+    // 过了宽限期：p2 是最早加入的剩余玩家 → 接管，任期 +1
     const p2Tick = tick(earlyTick.state, HOST_LOST_GRACE_MS)
     expect(p2Tick.state.hostId).toBe('p2')
+    expect(p2Tick.state.epoch).toBe(2)
     expect(types(p2Tick.effects)).toEqual(['becameHost', 'broadcastHostHello'])
 
     // p3 不接管（它不是最早者）
@@ -158,13 +160,44 @@ describe('房主选举', () => {
     expect(p3Tick.effects).toHaveLength(0)
   })
 
-  it('非 LOBBY 阶段拒绝接管（游戏内不做主机迁移）', () => {
+  it('★ 对局中（PLAYING）同样会接管 —— 这就是主机迁移', () => {
     const playing = setPhase(gone(clientView('p2', 100, 'p1'), 'p1').state, 'PLAYING')
     const noticed = tick(playing, 0).state
     const result = tick(noticed, HOST_LOST_GRACE_MS * 3)
 
-    expect(result.state.hostId).toBe('p1')
-    expect(result.effects).toHaveLength(0)
+    expect(result.state.hostId).toBe('p2')
+    expect(result.state.epoch).toBe(2)
+    expect(types(result.effects)).toEqual(['becameHost', 'broadcastHostHello'])
+  })
+
+  it('★ 任期号压住"带着旧局面的原房主"：原房主用低任期回来夺不回权威', () => {
+    // p2 接管后任期为 2
+    const afterTakeover = tick(tick(gone(clientView('p2', 100, 'p1'), 'p1').state, 0).state, HOST_LOST_GRACE_MS).state
+    expect(afterTakeover.epoch).toBe(2)
+
+    // 原房主 p1 回来、仍自认房主（它手上是旧任期 1、局面也是旧的）
+    const result = hostHello(afterTakeover, 'p1', 0, 1)
+    expect(result.state.hostId).toBe('p2') // 任期大者胜出
+    expect(types(result.effects)).toEqual(['broadcastHostHello']) // 并重申一次，让对方降级
+  })
+
+  it('原房主视角：听到更高任期就降级（不会再夺回、不会回滚局面）', () => {
+    const p1 = tick(createElection('p1', 'p1', 0), CLAIM_WAIT_MS).state
+    expect(p1.epoch).toBe(1)
+
+    const result = hostHello(p1, 'p2', 100, 2)
+    expect(result.state.hostId).toBe('p2')
+    expect(result.state.epoch).toBe(2)
+    expect(types(result.effects)).toEqual(['steppedDown'])
+  })
+
+  it('对方没报任期（旧客户端）→ 退回原来的 joinedAt 规则，不会被"我有任期你没有"顶掉', () => {
+    // p1 先加入（joinedAt 0）且已自任房主；p2（joinedAt 100）没带任期
+    const p1 = tick(createElection('p1', 'p1', 0), CLAIM_WAIT_MS).state
+    const result = hostHello(p1, 'p2', 100, null)
+    expect(result.state.hostId).toBe('p1') // 先加入者保住房主（加任期号之前的语义）
+    expect(result.state.epoch).toBe(1)
+    expect(types(result.effects)).toEqual(['broadcastHostHello'])
   })
 
   it('房主回来 → 清除掉线计时', () => {

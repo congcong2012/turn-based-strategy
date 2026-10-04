@@ -43,8 +43,11 @@ export type Wire =
   | { t: 'cmd'; from: PlayerId; cmd: Command }
   | { t: 'cmdRejected'; from: PlayerId; code: ErrorCode }
   | { t: 'hello'; from: PlayerId; nickname: string; joinedAt: number }
-  /** hostHello 带 joinedAt：接收方无需先收到对方的 hello 也能裁决竞态（见 ADR-3 / ADR-19） */
-  | { t: 'hostHello'; from: PlayerId; hostId: PlayerId; joinedAt: number }
+  /**
+   * hostHello 带 joinedAt：接收方无需先收到对方的 hello 也能裁决竞态（见 ADR-3 / ADR-19）。
+   * `epoch` = 房主权任期号：**任期大的赢**，用于游戏内主机迁移时压住"带着旧局面的原房主"。
+   */
+  | { t: 'hostHello'; from: PlayerId; hostId: PlayerId; joinedAt: number; epoch?: number }
   | { t: 'lobby'; from: PlayerId; lobby: LobbySnapshot }
   | { t: 'ready'; from: PlayerId; ready: boolean }
   | { t: 'nick'; from: PlayerId; nickname: string }

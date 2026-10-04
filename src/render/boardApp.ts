@@ -529,6 +529,10 @@ export class BoardApp {
     const view = this.view
     const PIXI = this.pixi
     if (!view || !PIXI) return
+    // 已销毁就不要再画：页面关闭/刷新时"销毁 Pixi"与"rAF 里在途的那一帧"会撞车，
+    // 表现为 `[board] 渲染这一帧失败：Cannot read properties of null (reading 'clear')`。
+    // 有 catch 兜底不至于崩，但每次 E2E 都会刷一屏日志、掩盖真正的问题。
+    if (this.destroyed) return
     if (!this.terrainG || !this.overlayG || !this.zoneLabel) return // 初始化未完成时的防御
     const { state } = view
     const map = getMap(state.mapId, this.data)

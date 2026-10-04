@@ -553,12 +553,21 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
   function applyEffects(effects: ElectionEffect[]): void {
     for (const effect of effects) {
+      // 交接发生时是否已经开局（决定提示文案：大厅接管 vs 对局内接管）
+      const wasInGame = game !== null && game.phase !== 'GAME_OVER'
       if (effect.type === 'becameHost') {
         role = 'host'
         lobby = lobbyFromRecords()
-        notice = '你已成为房主'
+        notice = wasInGame ? '原房主掉线，你已接任房主' : '你已成为房主'
         broadcastLobby()
+        // 对局中接管：**内存里那份局面就是最新的**（房主每执行一步都会全量广播），
+        // 所以不需要任何"状态传输"，直接用自己手上的继续，并再广播一次让所有人（含原房主）对齐。
+        // maybeRestoreGame 只在 game === null 时才会读本地存档，因此不会覆盖它。
         maybeRestoreGame()
+        if (game) {
+          if (roomCode) saveGame(storage, roomCode, game)
+          broadcastGame()
+        }
       } else if (effect.type === 'steppedDown') {
         role = 'client'
         lobby = null
@@ -578,6 +587,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
           from: selfId,
           hostId: effect.hostId,
           joinedAt: election?.joinedAt ?? now(),
+          epoch: election?.epoch ?? 0,
         })
       }
     }
@@ -605,7 +615,13 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
           // 立即告诉新玩家谁是房主，避免对方空等 3 秒后误自任房主
           // joinedAt 一并带上：对方即便还没收到我们的 hello，也能正确裁决竞态
           transport?.send(
-            { t: 'hostHello', from: selfId, hostId: selfId, joinedAt: election?.joinedAt ?? now() },
+            {
+              t: 'hostHello',
+              from: selfId,
+              hostId: selfId,
+              joinedAt: election?.joinedAt ?? now(),
+              epoch: election?.epoch ?? 0,
+            },
             peerId,
           )
           // 若是掉线玩家回来了：恢复席位（对局进行中我们保留了他的座位）
@@ -626,7 +642,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       }
       case 'hostHello': {
         if (election) {
-          const result = electionHostHello(election, msg.hostId, msg.joinedAt ?? null)
+          const result = electionHostHello(election, msg.hostId, msg.joinedAt ?? null, msg.epoch ?? null)
           election = result.state
           applyEffects(result.effects)
         }
@@ -993,6 +1009,11 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
     sendCommand(cmd: Command): void {
       if (!game) return
+      // 提示条是"最近发生了什么"的状态行：我自己一操作，旧提示就该让位
+      if (notice !== null) {
+        notice = null
+        emit()
+      }
       if (isHost()) {
         runCommand(selfId, cmd)
         return
