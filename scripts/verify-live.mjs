@@ -93,9 +93,13 @@ try {
   // ---------- 4. 捐赠二维码 ----------
   await pageA.locator('[data-testid=donate-button]').click()
   const qr = pageA.locator('[data-testid=donate-qrcode]')
-  await qr.waitFor({ timeout: 10000 })
+  // ⚠️ 这里**不能**等 `state: 'visible'`：`<img>` 在图片解码完成前宽度有、**高度为 0**，
+  //    Playwright 据此判定"不可见" —— 于是"公网图片加载慢/偶发失败"会被伪装成"弹层打不开"，
+  //    在发版门禁上表现为一条假失败。改成"等元素挂载 + 轮询 naturalWidth"，
+  //    测的正是这条检查真正想验证的东西（图片到底解码出来没有）。
+  await qr.waitFor({ state: 'attached', timeout: 10_000 })
   let qrWidth = 0
-  for (let i = 0; i < 20 && qrWidth === 0; i += 1) {
+  for (let i = 0; i < 60 && qrWidth === 0; i += 1) {
     qrWidth = await qr.evaluate((el) => el.naturalWidth)
     if (qrWidth === 0) await sleep(500)
   }
