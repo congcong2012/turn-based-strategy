@@ -117,7 +117,15 @@ test.describe('手机布局（393px 竖屏）', () => {
     await expect(page.getByTestId('rules-units')).toBeVisible()
     await expectNoHorizontalOverflow(page)
 
+    // 单人练习设置页：难度/地图的说明文字最长，最容易把两列网格撑出屏外
+    // （`button` 上有全局 white-space: nowrap，曾经真的在手机宽度下整页横向溢出）
     await page.getByRole('button', { name: '返回主页' }).click()
+    await page.getByTestId('entry-pve').click()
+    await expect(page.getByTestId('pve-setup')).toBeVisible()
+    await expect(page.getByTestId('pve-difficulty-oracle')).toBeVisible()
+    await expectNoHorizontalOverflow(page)
+    await page.getByTestId('back-home').click()
+
     await page.getByTestId('donate-button').click()
     const qr = page.getByTestId('donate-qrcode')
     await expect(qr).toBeVisible()

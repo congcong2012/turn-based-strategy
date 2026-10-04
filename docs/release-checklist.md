@@ -126,3 +126,4 @@ git push origin v1.0.0
 | 只有部分玩家连不上 | 让对方点「切换信令」→「手动直连」→ 发回诊断信息 |
 | E2E 报 `ERR_CONNECTION_REFUSED` 或莫名超时 | 上一次被中断的 E2E 留下了半死的 dev/preview 服务器（Playwright 会复用它们）。**重跑该 project**；仍不行就先结束占用 5173/4173 的进程（注意别误杀别的 node 进程） |
 | 版本号不对 | CI 没跑 / 缓存没刷新；重跑工作流并强刷（Ctrl+F5） |
+| `npm run build` 报含 `safe-delete` 的错，或 `dist/` 明显不完整（入口分片缺失 → 白屏） | 某些开发环境给 Node 注入了"批量删除保护"，会拦下 `vite build` 清空 `outDir`（一次性删上百个文件）。带环境变量构建即可（本机是 `CODEBUDDY_SAFE_DELETE_ENABLED=0 npm run build`），或先手动清空 `dist/` 再构建。**注意它表现为"时好时坏"**：失败一次后 `dist` 变小，下一次就过了 |
