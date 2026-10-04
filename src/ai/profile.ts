@@ -23,6 +23,25 @@ import type { EvaluateWeights } from './evaluate'
 
 export type Difficulty = 'easy' | 'normal' | 'hard' | 'master' | 'expert' | 'oracle'
 
+/**
+ * **对玩家开放**（设置页能选到）的难度档 —— 运行时单一事实源。
+ *
+ * 规则：只有**实测达到强度门槛**、且行为差异能被玩家感知的档才允许写进这里。
+ * `master` / `expert` / `oracle` 都还留在 `PROFILES` 里但**刻意不暴露**
+ * （实测未达门槛，见 `docs/ai-difficulty.md`）。
+ *
+ * 设置页的选项顺序、以及存档里"哪些难度算合法"都由它派生 ——
+ * 将来某个档达标要上线时，**只改这一处**即可，UI 与存档校验会一起跟上。
+ */
+export const PLAYABLE_DIFFICULTIES = ['easy', 'normal', 'hard'] as const
+
+export type PlayableDifficulty = (typeof PLAYABLE_DIFFICULTIES)[number]
+
+/** 判断一个值是不是"对玩家开放"的难度档（存档校验用） */
+export function isPlayableDifficulty(value: unknown): value is PlayableDifficulty {
+  return typeof value === 'string' && (PLAYABLE_DIFFICULTIES as readonly string[]).includes(value)
+}
+
 /** 部署计划：3 个兵刚好用满 3000 预算 */
 export const DEPLOY_PLAN = ['sword', 'spear', 'sword']
 

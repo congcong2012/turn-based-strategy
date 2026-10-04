@@ -9,7 +9,9 @@ import { useMemo, useState } from 'react'
 import { getMap, defaultMapFor, MAP_LIST } from '../game/data'
 import type { MapDef } from '../game/data'
 import type { Page } from '../app/route'
-import type { PveConfig, PveDifficulty } from '../app/pveSession'
+import type { PveConfig } from '../app/pveSession'
+import { PLAYABLE_DIFFICULTIES } from '../ai'
+import type { PlayableDifficulty } from '../ai'
 import { AppFooter } from './AppFooter'
 
 export interface PveSetupProps {
@@ -29,17 +31,37 @@ function zoneLabel(map: MapDef, index: number): string {
   return '中部'
 }
 
-/** 难度选项：加新难度只需要往这张表里加一行 */
-const DIFFICULTY_OPTIONS: Array<{ value: PveDifficulty; label: string; hint: string }> = [
-  { value: 'easy', label: '简单', hint: '出手随意，会漏操作' },
-  { value: 'normal', label: '普通', hint: '会抢据点、会集火残血' },
-  { value: 'hard', label: '困难', hint: '会集火残血、抱团推进、算两步' },
-]
+/**
+ * 难度文案：**行为差异要能被玩家感知**（AGENTS.md 的规则要求），
+ * 所以每一档写的都是"它会做什么"，而不是"它有多强"。
+ *
+ * 这张表按 `PLAYABLE_DIFFICULTIES` 穷尽（`Record<PlayableDifficulty, ...>`）：将来某个档
+ * 达标要上线时，只改 AI 层那张表，这里会因为缺键而**编译报错**，逼着补文案 —— 不会漏。
+ */
+const DIFFICULTY_COPY: Record<PlayableDifficulty, { label: string; hint: string }> = {
+  easy: {
+    label: '简单',
+    hint: '出手随意，偶尔干脆不动；部署也随便摆',
+  },
+  normal: {
+    label: '普通',
+    hint: '会抢据点、挑性价比高的架打、集火残血；关键一步会算一下后果',
+  },
+  hard: {
+    label: '困难',
+    hint: '看得更远；会经营军费、回防被抢的据点、给残血单位回补给，临近回合上限还会算分',
+  },
+}
+
+const DIFFICULTY_OPTIONS = PLAYABLE_DIFFICULTIES.map((value) => ({
+  value,
+  ...DIFFICULTY_COPY[value],
+}))
 
 export function PveSetup({ onStart, onNavigate }: PveSetupProps) {
   const [opponents, setOpponents] = useState(1)
   const [humanSeat, setHumanSeat] = useState(0)
-  const [difficulty, setDifficulty] = useState<PveDifficulty>('normal')
+  const [difficulty, setDifficulty] = useState<PlayableDifficulty>('normal')
 
   const total = opponents + 1
   const mapId = defaultMapFor(total)
@@ -136,6 +158,10 @@ export function PveSetup({ onStart, onNavigate }: PveSetupProps) {
             </button>
           ))}
         </div>
+        <p className="muted small" data-testid="pve-difficulty-fairness">
+          难度只改变 AI 的<b>决策水平</b>：AI 与你用<b>完全相同的规则</b>，
+          军费、据点收入、单位上限、行动点一项都不多给 —— 不会靠加资源来"变强"。
+        </p>
       </section>
 
       <section className="panel">

@@ -88,6 +88,12 @@ test.describe('单人练习（PVE）', () => {
     await expect(page.getByTestId('pve-difficulty-hard')).toHaveClass(/picked/)
     await page.getByTestId('pve-difficulty-normal').click()
 
+    // 三档必须写明**行为差异**（不能只是"更聪明"这类空话），并明示公平性
+    await expect(page.getByTestId('pve-difficulty-easy')).toContainText('偶尔干脆不动')
+    await expect(page.getByTestId('pve-difficulty-normal')).toContainText('集火残血')
+    await expect(page.getByTestId('pve-difficulty-hard')).toContainText('回防被抢的据点')
+    await expect(page.getByTestId('pve-difficulty-fairness')).toContainText('完全相同的规则')
+
     // 返回主页
     await page.getByTestId('back-home').click()
     await expect(page.getByTestId('entry-online')).toBeVisible()

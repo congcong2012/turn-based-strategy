@@ -15,6 +15,7 @@ import {
 } from '../../src/app/pveStore'
 import type { PveSnapshot } from '../../src/app/pveStore'
 import type { PveConfig } from '../../src/app/pveSession'
+import { PLAYABLE_DIFFICULTIES } from '../../src/ai'
 
 interface MemoryStorage extends GameStorage {
   data: Map<string, string>
@@ -141,11 +142,17 @@ describe('pveStore · 校验与降级', () => {
 })
 
 describe('pveStore · isPlausibleConfig', () => {
-  it('接受三档难度与合法区间', () => {
-    for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+  it('接受"对玩家开放"的每一档难度（列表由 AI 层单一事实源派生，不会与设置页脱节）', () => {
+    for (const difficulty of PLAYABLE_DIFFICULTIES) {
       expect(isPlausibleConfig({ ...config, difficulty })).toBe(true)
     }
     expect(isPlausibleConfig({ opponents: 3, humanSeat: 3, difficulty: 'hard', seed: 0 })).toBe(true)
+  })
+
+  it('拒绝尚未开放的档（master / expert / oracle）：它们只存在于内部策略表，不该从存档里进来', () => {
+    for (const difficulty of ['master', 'expert', 'oracle']) {
+      expect(isPlausibleConfig({ ...config, difficulty })).toBe(false)
+    }
   })
 
   it('拒绝越界与缺字段', () => {

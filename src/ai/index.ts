@@ -38,8 +38,8 @@ import { hashSeed, mulberry32 } from './rng'
 import type { Command, GameState, PlayerId } from '../game/types'
 
 // 难度档案与启发式打分已拆到独立模块；这里 re-export，保持对外 API 与 import 路径不变。
-export type { Difficulty, AiProfile } from './profile'
-export { profileFor } from './profile'
+export type { Difficulty, AiProfile, PlayableDifficulty } from './profile'
+export { profileFor, PLAYABLE_DIFFICULTIES, isPlayableDifficulty } from './profile'
 
 /** 每回合 AI 最多执行的指令数：任何意外情况下都保证终止 */
 export const MAX_AI_STEPS = 40

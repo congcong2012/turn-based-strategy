@@ -16,14 +16,13 @@ import { defaultStorage } from '../net/gameStore'
 import { emptyJournal } from '../game/journal'
 import type { Journal } from '../game/journal'
 import type { GameState } from '../game/types'
-import type { PveConfig, PveDifficulty } from './pveSession'
+import type { PveConfig } from './pveSession'
+import { isPlayableDifficulty } from '../ai'
 
 export const PVE_STORAGE_KEY = 'ancient-tactics.pve'
 
 /** 存档结构版本：字段不兼容时直接丢弃，避免用错规则继续下棋 */
 export const PVE_SAVE_VERSION = 1
-
-const DIFFICULTIES: readonly PveDifficulty[] = ['easy', 'normal', 'hard']
 
 export interface PveSnapshot {
   version: number
@@ -33,8 +32,12 @@ export interface PveSnapshot {
   journal: Journal
 }
 
-function isPlausibleDifficulty(value: unknown): value is PveDifficulty {
-  return typeof value === 'string' && (DIFFICULTIES as readonly string[]).includes(value)
+/**
+ * 合法难度直接取自 AI 层的"对玩家开放档"表（`PLAYABLE_DIFFICULTIES`），
+ * **不再在这里硬编码一份** —— 否则将来新开一档时，设置页能选、存档却会被判非法而清档。
+ */
+export function isPlausibleDifficulty(value: unknown): value is PveConfig['difficulty'] {
+  return isPlayableDifficulty(value)
 }
 
 /** 配置校验：opponents 1–3、humanSeat 落在合法座位内、seed 是有限数、difficulty 合法 */

@@ -7,4 +7,5 @@ dist-ssr/
 playwright-report/
 test-results/
 blob-report/
+tmp/
 *.log
