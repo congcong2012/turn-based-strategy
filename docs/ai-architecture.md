@@ -128,11 +128,11 @@ pveSession ──(AiTask)──▶ usePveGame 注入的 aiThink ──▶ worker
 > 由 `tests/e2e/pve.spec.ts` 与 `preview.spec.ts` 断言 **`transport === 'worker'` 且 `fallback === null`** ——
 > 这是唯一能抓住该问题的观测点。
 
-**为什么当初需要 Worker**：`oracle` 单步 p50 ≈ 139ms、p95 ≈ 407ms、**max ≈ 1784ms**，
-换算成整回合（`MAX_AI_STEPS = 40`）最坏约 **71s**；主线程同步算会把界面冻住。
-（切片 2 验收时还出现过一次未复现的 `max 8436ms` 离群值。）搬进 Worker 后界面始终可交互，
-但注意**墙钟时间没有变短**：单回合几十秒在体验上仍需要"AI 思考中"之类的反馈，
-所以 `oracle` 目前仍不接入 UI。
+**为什么当初需要 Worker**：`oracle` 单步 p50 ≈ 117–154ms（三次运行）、p95 ≈ 206–407ms，
+但 **max 在 1.8–3.9s 之间**（后期大型军团下候选枚举约 10ms/次 × 上百次），
+换算成整回合（`MAX_AI_STEPS = 40`）最坏 **70–155s**；主线程同步算会把界面冻住。
+搬进 Worker 后界面始终可交互（`dc5970a` 又补了「电脑正在思考…」提示），
+但注意**墙钟时间没有变短**：`oracle` 目前仍不接入 UI，缺的是"整回合的确定性预算"这一取舍。
 
 ## 6. 怎么验证改动
 
