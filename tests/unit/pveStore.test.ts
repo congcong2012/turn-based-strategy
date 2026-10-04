@@ -155,6 +155,13 @@ describe('pveStore · isPlausibleConfig', () => {
     }
   })
 
+  it('mapId 可选：不写照常合法（老存档），写了必须真的存在', () => {
+    expect(isPlausibleConfig({ ...config })).toBe(true)
+    expect(isPlausibleConfig({ ...config, mapId: 'ancient_04' })).toBe(true)
+    expect(isPlausibleConfig({ ...config, mapId: 'user_missing' })).toBe(false)
+    expect(isPlausibleConfig({ ...config, mapId: 42 })).toBe(false)
+  })
+
   it('拒绝越界与缺字段', () => {
     expect(isPlausibleConfig({ ...config, opponents: 4 })).toBe(false)
     expect(isPlausibleConfig({ ...config, humanSeat: 2 })).toBe(false)

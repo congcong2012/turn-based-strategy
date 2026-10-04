@@ -270,3 +270,67 @@ button.block { width: 100%; margin-bottom: 8px; }
   border-radius: 10px; background: #fff;
 }
 
+
+/* ---------------------------------------------------------------- 地图编辑器 */
+
+.editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.editor-row > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.editor-row input[type='text'] { width: 160px; }
+.editor-row input[type='number'] { width: 72px; }
+.editor-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.editor-row button.picked { border-color: var(--gold); background: #33291a; }
+.editor-row button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* 笔刷上的颜色小方块（地形色 / 玩家色） */
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  vertical-align: -1px;
+}
+
+.editor-canvas-wrap {
+  overflow: auto;
+  max-height: 70vh;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f0d0b;
+  padding: 8px;
+}
+.editor-canvas-wrap canvas { display: block; image-rendering: pixelated; }
+
+.editor-issues { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+.editor-issues li { margin-bottom: 4px; }
+.warn-text { color: var(--gold); }
+
+.editor-map-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.editor-map-list li { display: flex; gap: 8px; align-items: center; }
+.editor-map-list li > button:first-child { flex: 1; text-align: left; }
+
+.map-editor textarea { width: 100%; font-family: monospace; font-size: 11px; margin-bottom: 8px; }
+.map-editor code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+/* 编辑器在大屏上放宽一点：棋盘 24 格 × 22px 已经 528px，加上面板更舒服 */
+@media (min-width: 900px) {
+  .app.map-editor { max-width: 860px; }
+}

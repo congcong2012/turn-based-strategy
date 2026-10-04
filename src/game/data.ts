@@ -64,6 +64,20 @@ function buildMatchup(): Record<string, Record<string, number>> {
   return out
 }
 
+/**
+ * **内置地图**（随产物打包，人人都有）。
+ *
+ * 与"运行时地图表" `DATA.maps` 的区别很重要：
+ *  - `BUILTIN_MAPS` 只含仓库里的官方地图，**大厅选图只用它** ——
+ *    因为联机的其他玩家只可能拥有内置地图（自制地图没有随包分发，对方渲染不出来）；
+ *  - `DATA.maps` 是可写的运行时表，游戏逻辑（`getMap` / 存档校验 / 渲染）都读它，
+ *    自制地图通过 `registerMap` 注册进来，于是**单人练习**能直接开在自己的地图上。
+ */
+export const BUILTIN_MAPS: Record<string, MapDef> = {
+  ancient_01: ancient01 as MapDef,
+  ancient_04: ancient04 as MapDef,
+}
+
 export const DATA: GameData = {
   units: indexById(unitsJson.units as UnitType[]),
   unitList: unitsJson.units as UnitType[],
@@ -72,7 +86,38 @@ export const DATA: GameData = {
   matchup: buildMatchup(),
   capturePoints: buildingsJson.capturePoints,
   rules: rulesJson as Rules,
-  maps: { ancient_01: ancient01 as MapDef, ancient_04: ancient04 as MapDef },
+  maps: { ...BUILTIN_MAPS },
+}
+
+/**
+ * 把一张地图注册进运行时表（自制地图入口）。
+ *
+ * 为什么必须注册进 `DATA.maps` 而不是另开一张表：存储层与内核都靠
+ * `state.mapId in DATA.maps` 判断"这个地图存不存在"（见 `net/gameStore.isPlausibleGame`），
+ * 另开一张表就会导致"能开局、刷新后存档被判非法而清档"这类隐蔽问题。
+ */
+export function registerMap(map: MapDef, data: GameData = DATA): void {
+  data.maps[map.id] = map
+}
+
+/** 从地图表里移除（删除自制地图时调用；内置地图请勿移除） */
+export function unregisterMap(mapId: string, data: GameData = DATA): void {
+  delete data.maps[mapId]
+}
+
+/** 运行时是否存在这张地图 */
+export function hasMap(mapId: string, data: GameData = DATA): boolean {
+  return Object.prototype.hasOwnProperty.call(data.maps, mapId)
+}
+
+export function mapInfoOf(map: MapDef): MapInfo {
+  return {
+    id: map.id,
+    name: map.name,
+    width: map.width,
+    height: map.height,
+    players: map.deployZones.length,
+  }
 }
 
 export type MapInfo = {
@@ -84,14 +129,8 @@ export type MapInfo = {
   players: number
 }
 
-/** 地图清单（房主在大厅里选；未选时按人数自动挑） */
-export const MAP_LIST: MapInfo[] = Object.values(DATA.maps).map((map) => ({
-  id: map.id,
-  name: map.name,
-  width: map.width,
-  height: map.height,
-  players: map.deployZones.length,
-}))
+/** 地图清单（**只有内置地图**；房主在大厅里选，未选时按人数自动挑） */
+export const MAP_LIST: MapInfo[] = Object.values(BUILTIN_MAPS).map(mapInfoOf)
 
 /** 按人数自动推荐地图 */
 export function defaultMapFor(playerCount: number): string {

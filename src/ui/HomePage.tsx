@@ -40,6 +40,12 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
           <span className="entry-title">规则速查</span>
           <span className="entry-desc">兵种、克制、地形、占领与胜负，一页看完</span>
         </button>
+
+        <button type="button" className="entry-card" data-testid="entry-editor" onClick={() => onNavigate('editor')}>
+          <span className="entry-icon">🗺️</span>
+          <span className="entry-title">地图编辑器</span>
+          <span className="entry-desc">画一张自己的地图，做好就能在单人练习里开一局</span>
+        </button>
       </section>
 
       <section className="panel">

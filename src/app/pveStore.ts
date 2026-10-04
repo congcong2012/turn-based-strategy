@@ -18,6 +18,7 @@ import type { Journal } from '../game/journal'
 import type { GameState } from '../game/types'
 import type { PveConfig } from './pveSession'
 import { isPlayableDifficulty } from '../ai'
+import { hasMap } from '../game/data'
 
 export const PVE_STORAGE_KEY = 'ancient-tactics.pve'
 
@@ -51,7 +52,13 @@ export function isPlausibleConfig(value: unknown): value is PveConfig {
   const humanSeat = Math.floor(config.humanSeat)
   if (humanSeat < 0 || humanSeat > opponents) return false
   if (typeof config.seed !== 'number' || !Number.isFinite(config.seed)) return false
-  return isPlausibleDifficulty(config.difficulty)
+  if (!isPlausibleDifficulty(config.difficulty)) return false
+  // 指定了地图就必须真的存在（自制地图由 main.tsx 的 installUserMaps 在启动时注册）。
+  // 地图被删掉后，旧存档会因为这里判非法而自动清档 —— 而不是开局时抛「未知地图」。
+  if (config.mapId !== undefined) {
+    if (typeof config.mapId !== 'string' || !hasMap(config.mapId)) return false
+  }
+  return true
 }
 
 /** 战报校验失败时**只丢战报**（降级为空 journal），不因此丢掉整局 */

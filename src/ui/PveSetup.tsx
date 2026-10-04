@@ -1,15 +1,18 @@
 /**
- * 单人练习（PVE）设置页：选对手数量 / 我的阵营 / 难度 → 开始。
+ * 单人练习（PVE）设置页：选对手数量 / 地图 / 我的阵营 / 难度 → 开始。
  *
- * 说明：地图由"对手数量"决定（2 人用古道渡口，3–4 人用四战之地），
- * 而"我的阵营 = 出生角"同时决定出手顺序：**0 号角先手**（内核里 players[0] 先行动）。
+ * 地图默认按对手数量自动挑（2 人用古道渡口，3–4 人用四战之地），
+ * 也可以手动指定 —— 包括**地图编辑器做的自制地图**（可用的自制图会带「自制」标记）。
+ *
+ * "我的阵营 = 出生角"同时决定出手顺序：**0 号角先手**（内核里 players[0] 先行动）。
  */
 
 import { useMemo, useState } from 'react'
-import { getMap, defaultMapFor, MAP_LIST } from '../game/data'
+import { defaultMapFor, getMap, hasMap } from '../game/data'
 import type { MapDef } from '../game/data'
 import type { Page } from '../app/route'
 import type { PveConfig } from '../app/pveSession'
+import { listPveMaps } from '../app/mapStore'
 import { PLAYABLE_DIFFICULTIES } from '../ai'
 import type { PlayableDifficulty } from '../ai'
 import { AppFooter } from './AppFooter'
@@ -17,6 +20,8 @@ import { AppFooter } from './AppFooter'
 export interface PveSetupProps {
   onStart: (config: PveConfig) => void
   onNavigate: (page: Page) => void
+  /** 从地图编辑器「用这张图开始单人练习」跳过来时，预选这张地图 */
+  preferredMapId?: string
 }
 
 /** 按部署区在地图上的方位，给出生角一个人话名字（北/南/西北/东南…） */
@@ -58,15 +63,26 @@ const DIFFICULTY_OPTIONS = PLAYABLE_DIFFICULTIES.map((value) => ({
   ...DIFFICULTY_COPY[value],
 }))
 
-export function PveSetup({ onStart, onNavigate }: PveSetupProps) {
+export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps) {
   const [opponents, setOpponents] = useState(1)
   const [humanSeat, setHumanSeat] = useState(0)
   const [difficulty, setDifficulty] = useState<PlayableDifficulty>('normal')
+  // null = 按人数自动挑；有值 = 玩家手动选的地图
+  const [pickedMapId, setPickedMapId] = useState<string | null>(preferredMapId ?? null)
 
   const total = opponents + 1
-  const mapId = defaultMapFor(total)
-  const map = getMap(mapId)
-  const mapInfo = MAP_LIST.find((m) => m.id === mapId)
+  // 可选地图：内置 + 自制，且席位够用（例如 2 人图不会出现在 4 人局里）
+  const candidates = useMemo(() => listPveMaps(total), [total])
+  const autoMapId = defaultMapFor(total)
+  // `hasMap` 是必须的：地图可能存在于本地列表却还没注册进运行时表，
+  // 那时 getMap 会直接抛错把整页打成白屏。宁可回退到自动挑的内置图。
+  const effectiveMapId =
+    pickedMapId && hasMap(pickedMapId) && candidates.some((m) => m.id === pickedMapId)
+      ? pickedMapId
+      : autoMapId
+  const map = getMap(effectiveMapId)
+  const mapInfo = candidates.find((m) => m.id === effectiveMapId)
+  const isCustomMap = mapInfo?.custom ?? false
 
   // 改变对手数量时，把阵营收敛到合法范围
   const seat = Math.min(humanSeat, total - 1)
@@ -82,6 +98,7 @@ export function PveSetup({ onStart, onNavigate }: PveSetupProps) {
       opponents,
       humanSeat: seat,
       difficulty,
+      mapId: effectiveMapId,
       // 种子决定"简单"难度抽到什么随机数；普通 / 困难是确定性策略。
       // 用时间戳保证每局不同，同时让同一局（含刷新恢复后）完全可复现。
       seed: Date.now() % 2147483647,
@@ -113,9 +130,41 @@ export function PveSetup({ onStart, onNavigate }: PveSetupProps) {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="panel">
+        <h2>地图</h2>
+        <div className="unit-picker" data-testid="pve-map-picker">
+          <button
+            type="button"
+            data-testid="pve-map-auto"
+            className={pickedMapId === null ? 'picked' : ''}
+            onClick={() => setPickedMapId(null)}
+          >
+            自动
+            <span className="muted small"> 按人数挑（{getMap(autoMapId).name}）</span>
+          </button>
+          {candidates.map((candidate) => (
+            <button
+              key={candidate.id}
+              type="button"
+              data-testid={'pve-map-' + candidate.id}
+              className={effectiveMapId === candidate.id ? 'picked' : ''}
+              onClick={() => setPickedMapId(candidate.id)}
+            >
+              {candidate.name}
+              {candidate.custom ? <span className="muted small"> 自制</span> : null}
+              <span className="muted small"> {candidate.width}×{candidate.height} · {candidate.players} 方</span>
+            </button>
+          ))}
+        </div>
         <p className="muted small" data-testid="pve-map-hint">
-          地图：{mapInfo?.name ?? mapId}（{map.width}×{map.height}，{total} 方）
+          当前：{mapInfo?.name ?? effectiveMapId}（{map.width}×{map.height}，{total} 方
+          {isCustomMap ? ' · 自制地图' : ''}）
         </p>
+        <button type="button" data-testid="pve-open-editor" onClick={() => onNavigate('editor')}>
+          打开地图编辑器
+        </button>
       </section>
 
       <section className="panel">

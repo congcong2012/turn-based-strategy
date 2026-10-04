@@ -1,10 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useRoute } from './app/route'
 import { useRoom } from './hooks/useRoom'
 import { usePveGame } from './hooks/usePveGame'
 import { GameScreen } from './ui/GameScreen'
 import { HomePage } from './ui/HomePage'
 import { Lobby } from './ui/Lobby'
+import { MapEditor } from './ui/MapEditor'
 import { PveSetup } from './ui/PveSetup'
 import { RulesPanel } from './ui/RulesPanel'
 
@@ -14,6 +15,8 @@ export default function App() {
   // 单人模式：完全离线，不走 useRoom/transport
   // resumeWhen：只有落在 #/pve 时才尝试从存档恢复（刷新/重开标签页接着打）
   const pve = usePveGame({ onExit: () => go('home'), resumeWhen: route.page === 'pve' })
+  // 地图编辑器 → 单人练习设置页的"预选地图"（一次性的，不写进路由，免得链接里带一堆参数）
+  const [preferredMapId, setPreferredMapId] = useState<string | null>(null)
 
   // 邀请链接里的房间码优先（老链接必须继续直达大厅）
   const roomCode = useMemo(() => route.roomCode ?? initialRoomCode, [route.roomCode, initialRoomCode])
@@ -36,7 +39,20 @@ export default function App() {
   // 对局优先：一旦开局，无论当前在哪一页都显示对局界面
   if (view.game) return <GameScreen view={view} actions={actions} mode="online" />
 
-  if (route.page === 'pve') return <PveSetup onStart={pve.start} onNavigate={go} />
+  if (route.page === 'pve') {
+    return <PveSetup onStart={pve.start} onNavigate={go} preferredMapId={preferredMapId ?? undefined} />
+  }
+  if (route.page === 'editor') {
+    return (
+      <MapEditor
+        onNavigate={go}
+        onPlaytest={(mapId) => {
+          setPreferredMapId(mapId)
+          go('pve')
+        }}
+      />
+    )
+  }
   if (route.page === 'rules') return <RulesPanel onNavigate={go} />
   if (route.page === 'home') return <HomePage onNavigate={go} roomCode={roomCode} />
 

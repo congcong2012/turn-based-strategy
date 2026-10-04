@@ -10,7 +10,7 @@
  * 因此 PVE 与联机跑的是同一套规则代码。
  */
 
-import { DATA, defaultMapFor } from '../game/data'
+import { DATA, defaultMapFor, getMap, hasMap } from '../game/data'
 import type { GameData } from '../game/data'
 import { createGame, currentPlayer } from '../game/state'
 import { applyCommand } from '../game/commands'
@@ -33,6 +33,11 @@ export interface PveConfig {
   /** 人类占据哪个出生角（0 起）。出生角序号**同时就是出手顺序**：0 号先手 */
   humanSeat: number
   difficulty: PveDifficulty
+  /**
+   * 指定用哪张地图（可选）。留空 = 按人数自动挑内置地图。
+   * 可以是**自制地图**（id 形如 `user_*`）；席位不够（部署区少于玩家数）时会自动回退。
+   */
+  mapId?: string
   /** 随机种子：简单难度据此抽随机数；普通 / 困难是确定性策略。同种子 + 同配置必然可复现 */
   seed: number
 }
@@ -108,8 +113,14 @@ export function normalizeConfig(config: PveConfig): PveConfig {
   return { ...config, opponents, humanSeat }
 }
 
-/** 由配置推导对局参数（座位顺序即 players 数组顺序） */
-export function describePveMatch(config: PveConfig, humanId = PVE_HUMAN_ID) {
+/**
+ * 由配置推导对局参数（座位顺序即 players 数组顺序）。
+ *
+ * `mapId` 的优先级：配置里显式指定的地图（含**自制地图**）→ 按人数自动挑内置地图。
+ * 指定的地图必须"席位够用"（`deployZones.length >= total`），否则回退到自动挑，
+ * 免得选了 2 人图却开 4 人局，导致后两名玩家没有部署区。
+ */
+export function describePveMatch(config: PveConfig, humanId = PVE_HUMAN_ID, data: GameData = DATA) {
   const normalized = normalizeConfig(config)
   const total = normalized.opponents + 1
   const seatIds: PlayerId[] = []
@@ -121,8 +132,17 @@ export function describePveMatch(config: PveConfig, humanId = PVE_HUMAN_ID) {
     total,
     seatIds,
     aiSeats: seatIds.map((id, seat) => ({ id, seat })).filter((s) => s.id !== humanId),
-    mapId: defaultMapFor(total),
+    mapId: resolveMapId(normalized.mapId, total, data),
   }
+}
+
+/** 选地图：显式指定且席位够用就用它，否则按人数自动挑 */
+export function resolveMapId(requested: string | undefined, total: number, data: GameData = DATA): string {
+  if (requested && hasMap(requested, data) && getMap(requested, data).deployZones.length >= total) {
+    return requested
+  }
+  const fallback = defaultMapFor(total)
+  return hasMap(fallback, data) ? fallback : Object.keys(data.maps)[0]
 }
 
 export function createPveSession(options: PveSessionOptions): PveSession {
