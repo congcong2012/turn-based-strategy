@@ -334,3 +334,22 @@ button.block { width: 100%; margin-bottom: 8px; }
 @media (min-width: 900px) {
   .app.map-editor { max-width: 860px; }
 }
+
+/* 单人模式：电脑回合进行中的提示条（让"在想"这件事可见，避免玩家以为卡死） */
+.thinking-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #1d2a2a; border-bottom: 1px solid #2f4a48; color: #cfe8e4;
+  padding: 8px 14px; font-size: 13px;
+}
+.thinking-dot {
+  width: 9px; height: 9px; border-radius: 50%; background: #3fa7a0; flex: 0 0 auto;
+  animation: thinking-pulse 1.1s ease-in-out infinite;
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+/* 尊重"减少动态效果"的系统偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dot { animation: none; opacity: 0.9; }
+}

@@ -157,10 +157,16 @@ test.describe('单人练习（PVE）', () => {
     await expect(page.getByTestId('end-turn')).toBeEnabled()
     await page.getByTestId('end-turn').click()
 
+    // 电脑回合进行中要有明确反馈（高难度档单回合可能想很久，没有反馈会以为卡死）
+    await expect(page.getByTestId('ai-thinking')).toBeVisible()
+    await expect(page.getByTestId('ai-thinking')).toContainText('正在思考')
+
     // AI 会以约 450ms/步 走完自己的回合，然后把控制权交还人类
     await expect
       .poll(async () => page.getByTestId('current-player').innerText(), { timeout: 45_000 })
       .toContain('（你）')
+    // 交还之后提示条必须消失
+    await expect(page.getByTestId('ai-thinking')).toHaveCount(0)
 
     // 回合数应已推进
     const state = await gameState(page)

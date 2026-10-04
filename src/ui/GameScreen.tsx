@@ -72,6 +72,29 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
   const currentPlayer = game.players[game.turnIndex]
   const isDeploy = game.phase === 'DEPLOY'
   const isOver = game.phase === 'GAME_OVER'
+
+  /**
+   * 单人模式：轮到电脑时给一条明确反馈。
+   *
+   * 为什么需要：AI 的每一步之间有 450ms 的动作间隔，高难度档（回合级 rollout）单步还要额外算上百毫秒，
+   * 一个回合最坏能到几十秒 —— 没有反馈玩家会以为页面卡死。
+   * 只在「行动阶段 + 不是我的回合」出现：部署阶段 AI 是瞬间完成的，弹提示反而多余。
+   */
+  const aiThinking = mode === 'pve' && game.phase === 'PLAYING' && currentPlayer !== view.selfId
+  /** 等待秒数：纯粹为了"它还在动"的可感知性，不参与任何游戏逻辑 */
+  const [thinkSeconds, setThinkSeconds] = useState(0)
+  useEffect(() => {
+    if (!aiThinking) {
+      setThinkSeconds(0)
+      return
+    }
+    const startedAt = Date.now()
+    setThinkSeconds(0)
+    const timer = setInterval(() => {
+      setThinkSeconds(Math.floor((Date.now() - startedAt) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [aiThinking])
   const myDeploy = game.deploy[view.selfId]
   const selectedUnit = game.units.find((u) => u.id === selectedUnitId) ?? null
   const selectedBuilding = game.buildings.find((b) => b.id === selectedBuildingId) ?? null
@@ -333,6 +356,17 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
           {mode === 'pve' ? '退出对局' : '离开'}
         </button>
       </header>
+
+      {/* 单人模式：电脑回合进行中的明确反馈（联机模式下"不是我的回合"是另一个人类，不该这么提示） */}
+      {mode === 'pve' && aiThinking ? (
+        <div className="thinking-banner" data-testid="ai-thinking">
+          <span className="thinking-dot" aria-hidden="true" />
+          <span>{nameOf(view, currentPlayer)} 正在思考…</span>
+          <span className="muted small" data-testid="ai-thinking-elapsed">
+            {thinkSeconds > 0 ? `已等待 ${thinkSeconds} 秒` : '请稍候'}
+          </span>
+        </div>
+      ) : null}
 
       {/* 以下是纯联机片段：单人模式没有房主、没有断线、没有信令可切 */}
       {mode === 'online' ? (

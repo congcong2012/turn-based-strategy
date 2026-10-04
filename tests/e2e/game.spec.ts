@@ -126,6 +126,9 @@ test.describe('对局（本地传输）', () => {
     await alice.getByTestId('end-turn').click()
     await expect(alice.getByTestId('current-player')).toContainText('乙将军')
     await expect(bob.getByTestId('end-turn')).toBeEnabled()
+    // 「电脑正在思考」只属于单人模式：联机里"不是我的回合"是另一个人类，不该这么提示
+    await expect(alice.getByTestId('ai-thinking')).toHaveCount(0)
+    await expect(bob.getByTestId('ai-thinking')).toHaveCount(0)
 
     // 乙移动自己的单位
     const enemy = (await gameState(bob)).units.find((u) => u.owner === 'p-b')!
