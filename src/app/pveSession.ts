@@ -272,6 +272,8 @@ export function createPveSession(options: PveSessionOptions): PveSession {
       paused: false,
       pausedReason: 'none',
       canSkipTurn: false,
+      canTakeOver: false,
+      takeoverPlayerId: null,
       offlinePlayers: [],
       log: journal.log,
       events: journal.events,

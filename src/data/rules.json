@@ -3,7 +3,7 @@
   "maxPlayers": 2,
   "roundLimit": 30,
   "startFunds": 4000,
-  "deployBudget": 3000,
+  "deployBudget": 4000,
   "deployMaxUnits": 4,
   "unitCap": 32,
   "unitsPerBarracksPerTurn": 2,

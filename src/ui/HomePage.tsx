@@ -52,7 +52,7 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
         <h2>三步开局</h2>
         <ol className="rules-list">
           <li><b>进房间</b>：房主输入 6 位房间码（或点「随机生成」），把「复制邀请链接」发给好友</li>
-          <li><b>部署</b>：预算 3000、最多 4 个单位，放在高亮的己方部署区</li>
+          <li><b>部署</b>：预算 4000、最多 4 个单位，放在高亮的己方部署区</li>
           <li><b>开打</b>：抢中立村落攒军费、在兵营造兵，攻陷对方王城或全歼对手即获胜</li>
         </ol>
         <p className="muted small">手机浏览器同样可玩：双指缩放，移动/攻击需再点一次确认。</p>

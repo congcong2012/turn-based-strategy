@@ -130,6 +130,48 @@ describe('断线重连', () => {
     expect(alice.view.game?.units.filter((u) => u.owner === 'bob')).toHaveLength(1)
   })
 
+  it('对手掉线：房主可以让 AI 代打它的整个回合（而不是白跳过）', async () => {
+    const { alice, bob } = await playingGame(hub, storage)
+    await bob.session.leave()
+    await vi.advanceTimersByTimeAsync(200)
+
+    alice.session.sendCommand({ type: 'endTurn' })
+    await vi.advanceTimersByTimeAsync(200)
+    expect(alice.view.canSkipTurn).toBe(true)
+    expect(alice.view.canTakeOver).toBe(true)
+
+    alice.session.takeOverDisconnectedTurn()
+    expect(alice.view.takeoverPlayerId).toBe('bob')
+
+    // 托管是**逐拍推进**的（450ms/步）：跑够时间后应当把控制权交还甲
+    await vi.advanceTimersByTimeAsync(450 * 46)
+    expect(alice.view.myTurn).toBe(true)
+    expect(alice.view.takeoverPlayerId).toBeNull()
+    expect(alice.view.paused).toBe(false)
+    // 托管不等于删号：乙的部队还在，只是这个回合由 AI 替他走了
+    expect(alice.view.game?.phase).toBe('PLAYING')
+    expect(alice.view.game?.units.filter((u) => u.owner === 'bob')).toHaveLength(1)
+  })
+
+  it('托管途中掉线者回来：立刻停止并把控制权交还给他', async () => {
+    const { alice, bob } = await playingGame(hub, storage)
+    await bob.session.leave()
+    await vi.advanceTimersByTimeAsync(200)
+    alice.session.sendCommand({ type: 'endTurn' })
+    await vi.advanceTimersByTimeAsync(200)
+
+    alice.session.takeOverDisconnectedTurn()
+    await vi.advanceTimersByTimeAsync(500) // 至少代打了一步
+    expect(alice.view.takeoverPlayerId).toBe('bob')
+
+    const bobAgain = makePeer(hub, 'bob', '乙', storage)
+    await bobAgain.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(alice.view.takeoverPlayerId).toBeNull()
+    expect(bobAgain.view.myTurn).toBe(true) // 回合还在他手上，交还得干净
+  })
+
   it('掉线玩家回来后拿到最新状态并能继续行动', async () => {
     const { alice, bob, unitId } = await playingGame(hub, storage)
     await bob.session.leave()

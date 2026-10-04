@@ -51,8 +51,15 @@ export function isPlayableDifficulty(value: unknown): value is PlayableDifficult
   return typeof value === 'string' && (PLAYABLE_DIFFICULTIES as readonly string[]).includes(value)
 }
 
-/** 部署计划：3 个兵刚好用满 3000 预算 */
-export const DEPLOY_PLAN = ['sword', 'spear', 'sword']
+/**
+ * 部署计划：4 个兵刚好用满 4000 预算。
+ *
+ * 为什么是 4 个而不是 3 个：`deployMaxUnits` 是 4，而最便宜的兵 1000 ——
+ * 预算 3000 时"最多 4 个单位"这条上限**永远不可能触发**（玩家会看到"还差 1 个位置却放不下"）。
+ * 提到 4000 之后 4 个轻装单位刚好成立，同时重骑兵（4000）也变成"一个兵吃满预算"的选项。
+ * AI 跟着用满预算，否则等于每个 AI 白送玩家一个兵。
+ */
+export const DEPLOY_PLAN = ['sword', 'spear', 'sword', 'spear']
 
 export interface AiProfile {
   /** 弱档：决策带噪（随机挑、偶尔漏操作、部署随意） */

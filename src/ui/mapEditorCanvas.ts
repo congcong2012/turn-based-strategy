@@ -69,6 +69,54 @@ export function rectFromCells(
   }
 }
 
+/**
+ * 对称绘制模式。
+ *
+ * 为什么需要：两张内置地图都是严格对称的，做一张**能开局的对战图**几乎都要对称摆地形与据点 ——
+ * 一格一格手动镜像又慢又容易错位。
+ * 只作用在**地形与据点**上；部署区是每个玩家一块矩形，本来就只有 2–4 块，手工拖更直接
+ * （而且"镜像部署区"会连带覆盖另一个玩家的区，语义反而更绕）。
+ */
+export type SymmetryMode = 'none' | 'mirrorX' | 'mirrorY' | 'center'
+
+export const SYMMETRY_OPTIONS: Array<{ value: SymmetryMode; label: string }> = [
+  { value: 'none', label: '关' },
+  { value: 'mirrorX', label: '左右镜像' },
+  { value: 'mirrorY', label: '上下镜像' },
+  { value: 'center', label: '中心对称' },
+]
+
+/**
+ * 一次绘制要落笔的所有格子（含对称镜像，去重后返回）。
+ *
+ * 注意「左右镜像」= 沿**竖向中线**翻到另一半（x → w-1-x），
+ * 「上下镜像」= 沿**横向中线**（y → h-1-y），「中心对称」= 两者同时（180° 旋转）。
+ * 奇数尺寸时中线那一列/行是自己的镜像，去重后不会重复落笔。
+ */
+export function cellsWithSymmetry(
+  map: MapDef,
+  cell: { x: number; y: number },
+  symmetry: SymmetryMode,
+): Array<{ x: number; y: number }> {
+  const mirrorX = { x: map.width - 1 - cell.x, y: cell.y }
+  const mirrorY = { x: cell.x, y: map.height - 1 - cell.y }
+  const center = { x: map.width - 1 - cell.x, y: map.height - 1 - cell.y }
+
+  const raw =
+    symmetry === 'mirrorX' ? [cell, mirrorX]
+    : symmetry === 'mirrorY' ? [cell, mirrorY]
+    : symmetry === 'center' ? [cell, center]
+    : [cell]
+
+  const seen = new Set<string>()
+  return raw.filter((c) => {
+    const key = c.x + ',' + c.y
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const clean = hex.replace('#', '')
   const r = parseInt(clean.slice(0, 2), 16)

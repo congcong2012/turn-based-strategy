@@ -32,6 +32,8 @@ export interface RoomActions {
   sendCommand: (cmd: Command) => void
   /** 房主：跳过掉线玩家的回合 */
   skipDisconnectedTurn: () => void
+  /** 房主：让 AI 代打掉线玩家的整个回合（逐拍推进；掉线者回来即交还控制权） */
+  takeOverDisconnectedTurn: () => void
   /** 房主：选择地图（null = 按人数自动） */
   setMap: (mapId: string | null) => void
   /** 手动直连：开始配对（host = 生成邀请码，guest = 等待粘贴邀请码） */
@@ -77,6 +79,8 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     paused: false,
     pausedReason: 'none',
     canSkipTurn: false,
+    canTakeOver: false,
+    takeoverPlayerId: null,
     offlinePlayers: [],
     log: [],
     events: [],
@@ -224,6 +228,8 @@ export function useRoom(): UseRoomResult {
   const startGame = useCallback(() => sessionRef.current?.startGame(), [])
   const sendCommand = useCallback((cmd: Command) => sessionRef.current?.sendCommand(cmd), [])
   const skipDisconnectedTurn = useCallback(() => sessionRef.current?.skipDisconnectedTurn(), [])
+  /** 让 AI 代打掉线玩家的这一整个回合（房主专用；逐拍推进，掉线者回来即交还） */
+  const takeOverDisconnectedTurn = useCallback(() => sessionRef.current?.takeOverDisconnectedTurn(), [])
   const setMap = useCallback((mapId: string | null) => sessionRef.current?.setMap(mapId), [])
   const startManualPairing = useCallback(
     (roomCode: string, role: 'host' | 'guest', nickname: string) => {
@@ -275,6 +281,7 @@ export function useRoom(): UseRoomResult {
       setStrategy,
       sendCommand,
       skipDisconnectedTurn,
+      takeOverDisconnectedTurn,
       setMap,
       startManualPairing,
       submitManualCode,
@@ -289,6 +296,7 @@ export function useRoom(): UseRoomResult {
       setStrategy,
       sendCommand,
       skipDisconnectedTurn,
+      takeOverDisconnectedTurn,
       setMap,
       startManualPairing,
       submitManualCode,

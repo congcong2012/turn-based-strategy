@@ -48,7 +48,7 @@ joinRoom(config)                     // config.password 参与 genKey（SDP 派�
 
 | 指令 | 阶段 | 说明 |
 | --- | --- | --- |
-| `deploy{unitType,x,y}` | DEPLOY | 在己方部署区放置单位（预算 3000 / 最多 4 个） |
+| `deploy{unitType,x,y}` | DEPLOY | 在己方部署区放置单位（预算 4000 / 最多 4 个） |
 | `deployDone` | DEPLOY | 确认部署；双方都确认后进入 PLAYING |
 | `move{unitId,x,y}` | PLAYING | 移动（每单位每回合 1 次；路径由房主 Dijkstra 重算校验） |
 | `attack{unitId,targetId}` | PLAYING | 攻击（射程/间接单位"移动后不可攻击"校验，含反击结算） |

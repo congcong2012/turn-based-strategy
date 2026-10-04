@@ -81,11 +81,25 @@ describe('legalCommands · 部署阶段', () => {
     expect(deployCommandsFor(s, P1, data)).toEqual([])
   })
 
-  it('买不起的兵种不出现在候选里', () => {
-    const data = testData()
-    const s = newGame(data)
-    // 重骑 4000 > 部署预算 3000
-    expect(deployCommandsFor(s, P1, data).some((c) => c.type === 'deploy' && c.unitType === 'heavyCav')).toBe(false)
+  it('买不起的兵种不出现在候选里（按预算过滤）', () => {
+    const base = testData()
+    const withBudget = (deployBudget: number) => ({ ...base, rules: { ...base.rules, deployBudget } })
+
+    const deployTypes = (budget: number): string[] =>
+      deployCommandsFor(newGame(withBudget(budget)), P1, withBudget(budget))
+        .filter((c): c is Extract<Command, { type: 'deploy' }> => c.type === 'deploy')
+        .map((c) => c.unitType)
+
+    // 1500 预算：步兵（1000）与弓兵（1200）买得起，骑兵（1800）与器械（3000）买不起
+    expect(deployTypes(1500)).toEqual(expect.arrayContaining(['sword', 'spear', 'bow']))
+    expect(deployTypes(1500)).not.toContain('lightCav')
+    expect(deployTypes(1500)).not.toContain('catapult')
+
+    // 默认 4000 预算：所有兵种都在候选里（最贵的重骑兵正好 4000）
+    expect(deployTypes(base.rules.deployBudget)).toContain('heavyCav')
+
+    // 预算低到买不起任何兵 → 候选为空
+    expect(deployTypes(500)).toEqual([])
   })
 })
 

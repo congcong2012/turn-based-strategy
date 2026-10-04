@@ -8,10 +8,13 @@ import type { GameStorage } from '../../src/net/gameStore'
 import {
   MAPS_SAVE_VERSION,
   MAPS_STORAGE_KEY,
+  decodeShareCode,
   deleteUserMap,
+  encodeShareCode,
   exportMapJson,
   installUserMaps,
   isBuiltinMapId,
+  isShareCode,
   isUserMapId,
   listPveMaps,
   loadUserMaps,
@@ -245,5 +248,74 @@ describe('mapStore · 单人练习可选地图', () => {
     const list = listPveMaps(2, storage)
     expect(list.some((m) => m.id === 'ancient_01' && !m.custom)).toBe(true)
     expect(list.some((m) => m.id === custom.id && m.custom)).toBe(true)
+  })
+})
+
+describe('mapStore · 分享码', () => {
+  it('往返：编码再解码得到同一张图（id / 名称 / 地形 / 据点 / 部署区）', () => {
+    const source = track(
+      freshMap({
+        name: '渡口改·对称',
+        terrain: (() => {
+          const t = createBlankMap({ id: 'x', name: 'x', width: 24, height: 24, players: 2 }).terrain.slice()
+          t[0] = 'forest'
+          t[1] = 'forest'
+          t[30] = 'river'
+          t[31] = 'mountain'
+          return t
+        })(),
+      }),
+    )
+    const code = encodeShareCode(source)
+    expect(isShareCode(code)).toBe(true)
+
+    const decoded = decodeShareCode(code)
+    expect(decoded.ok).toBe(true)
+    if (!decoded.ok) return
+    expect(decoded.map.id).toBe(source.id) // ★ 保留原 id：两端一致才能联机选到同一张图
+    expect(decoded.map.name).toBe(source.name)
+    expect(decoded.map.terrain).toEqual(source.terrain)
+    expect(decoded.map.deployZones).toEqual(source.deployZones)
+    expect(decoded.map.buildings.map((b) => [b.type, b.x, b.y, b.owner])).toEqual(
+      source.buildings.map((b) => [b.type, b.x, b.y, b.owner]),
+    )
+  })
+
+  it('分享码足够短：24×24 两人图能在 1200 字符内（直接发聊天框的量级）', () => {
+    const code = encodeShareCode(freshMap())
+    expect(code.length).toBeLessThan(1200)
+  })
+
+  it('地形游程编码对重复地形有效：一张纯平原图的分享码比 JSON 短一个数量级', () => {
+    const plain = createBlankMap({ id: 'user_plain', name: '纯平原', width: 24, height: 24, players: 2 })
+    const noBuildings = { ...plain, buildings: [] }
+    expect(encodeShareCode(noBuildings).length).toBeLessThan(exportMapJson(noBuildings).length / 5)
+  })
+
+  it('坏码只报错不抛异常', () => {
+    // 不用 Buffer（app 的 tsconfig 没有 node 类型），手搓一个 base64url
+    const b64url = (text: string) =>
+      btoa(String.fromCharCode(...new TextEncoder().encode(text)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '')
+
+    expect(decodeShareCode('随便一段文字').ok).toBe(false)
+    expect(decodeShareCode('ATM1:@@@not-base64@@@').ok).toBe(false)
+    const result = decodeShareCode('ATM1:' + b64url(JSON.stringify({ v: 99 })))
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.errors.join()).toContain('版本')
+  })
+
+  it('分享码里的地图同样要过校验（不合法就拒绝，不会把坏图塞进本机）', () => {
+    const b64url = (text: string) =>
+      btoa(String.fromCharCode(...new TextEncoder().encode(text)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '')
+    const broken =
+      'ATM1:' + b64url(JSON.stringify({ v: 1, i: 'user_x', n: '坏图', w: 12, h: 12, p: ['plain'], r: [[144, 0]], b: [], z: [] }))
+    const result = decodeShareCode(broken)
+    expect(result.ok).toBe(false) // 没有部署区 → 不可玩
   })
 })

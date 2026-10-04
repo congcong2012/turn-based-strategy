@@ -24,8 +24,11 @@ import {
 } from '../game/mapValidation'
 import { createBlankMap, resizeMap } from '../game/mapTemplates'
 import {
+  decodeShareCode,
   deleteUserMap,
+  encodeShareCode,
   exportMapJson,
+  isShareCode,
   isUserMapId,
   loadUserMaps,
   newUserMapId,
@@ -35,13 +38,15 @@ import {
 import type { UserMap } from '../app/mapStore'
 import {
   OWNER_COLORS,
+  SYMMETRY_OPTIONS,
   canvasHeight,
   canvasWidth,
   cellFromPoint,
+  cellsWithSymmetry,
   drawMap,
   rectFromCells,
 } from './mapEditorCanvas'
-import type { ZonePreview } from './mapEditorCanvas'
+import type { SymmetryMode, ZonePreview } from './mapEditorCanvas'
 import type { Page } from '../app/route'
 import { AppFooter } from './AppFooter'
 
@@ -58,6 +63,9 @@ type Brush =
   | { kind: 'zone'; player: number }
 
 const CELL_SIZES = [14, 18, 22, 28]
+
+/** 撤销栈上限：一张 24×24 地图的快照只有几百个短字符串，50 步足够用且不吃内存 */
+const HISTORY_LIMIT = 50
 
 /** 可画的地形（`building` 由据点自动决定，不作为笔刷） */
 const PAINTABLE_TERRAINS = ['plain', 'road', 'forest', 'mountain', 'river']
@@ -165,21 +173,90 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
   const [savedMaps, setSavedMaps] = useState<UserMap[]>(() => loadUserMaps())
   const [brush, setBrush] = useState<Brush>({ kind: 'terrain', id: 'plain' })
   const [cellSize, setCellSize] = useState(22)
+  const [symmetry, setSymmetry] = useState<SymmetryMode>('none')
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null)
   const [zonePreview, setZonePreview] = useState<ZonePreview | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [importText, setImportText] = useState('')
   const [showImport, setShowImport] = useState(false)
+  /** 撤销 / 重做栈（存地图快照；地图很小，直接存整份最省心也最不容易错） */
+  const [past, setPast] = useState<MapDef[]>([])
+  const [future, setFuture] = useState<MapDef[]>([])
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const draggingRef = useRef(false)
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
   const lastCellRef = useRef<string | null>(null)
+  /** 本次拖拽开始时的地图快照（松手时若真的改过，就压进撤销栈） */
+  const dragSnapshotRef = useRef<MapDef | null>(null)
+  /** 本次拖拽是否真的落过笔 */
+  const paintedRef = useRef(false)
 
   const validation = useMemo(() => validateMap(map), [map])
   const dirty = savedId !== map.id
 
   const reload = useCallback(() => setSavedMaps(loadUserMaps()), [])
+
+  // ---------------------------------------------------------------- 撤销 / 重做
+
+  const pushHistory = useCallback((snapshot: MapDef) => {
+    setPast((stack) => [...stack, snapshot].slice(-HISTORY_LIMIT))
+    setFuture([])
+  }, [])
+
+  const clearHistory = useCallback(() => {
+    setPast([])
+    setFuture([])
+  }, [])
+
+  /** 带撤销的一步改动（改尺寸 / 改玩家数这类"一次性"操作） */
+  const commit = useCallback(
+    (next: MapDef) => {
+      pushHistory(map)
+      setMap(next)
+      lastCellRef.current = null
+    },
+    [map, pushHistory],
+  )
+
+  const undo = useCallback(() => {
+    if (past.length === 0) return
+    const previous = past[past.length - 1]
+    setPast(past.slice(0, -1))
+    setFuture([map, ...future].slice(0, HISTORY_LIMIT))
+    setMap(previous)
+    lastCellRef.current = null
+    paintedRef.current = false
+  }, [past, future, map])
+
+  const redo = useCallback(() => {
+    if (future.length === 0) return
+    const next = future[0]
+    setFuture(future.slice(1))
+    setPast([...past, map].slice(-HISTORY_LIMIT))
+    setMap(next)
+    lastCellRef.current = null
+    paintedRef.current = false
+  }, [past, future, map])
+
+  // Ctrl/Cmd+Z 撤销、Ctrl+Shift+Z / Ctrl+Y 重做；输入框里的撤销交还给浏览器
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return
+      const target = event.target as HTMLElement | null
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
+      const key = event.key.toLowerCase()
+      if (key === 'z' && !event.shiftKey) {
+        event.preventDefault()
+        undo()
+      } else if ((key === 'z' && event.shiftKey) || key === 'y') {
+        event.preventDefault()
+        redo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [undo, redo])
 
   // ---------------------------------------------------------------- 绘制
 
@@ -198,6 +275,12 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
 
   // ---------------------------------------------------------------- 编辑
 
+  /**
+   * 落笔：按对称模式把这一笔同时画到镜像格上，并标记"本次拖拽改过东西"。
+   *
+   * 撤销的粒度是**一次拖拽**（而不是一格）：连续拖动会命中几十上百格，
+   * 每格都压一次历史的话，撤销键按到手酸也只能退回一格。
+   */
   const applyBrush = useCallback(
     (cell: { x: number; y: number }) => {
       // 去重放在**事件层**：连续 pointermove 会反复命中同一格，没必要重复克隆地图。
@@ -208,9 +291,11 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
       const key = cell.x + ',' + cell.y
       if (lastCellRef.current === key) return
       lastCellRef.current = key
-      setMap((prev) => paintCell(prev, cell, brush))
+      paintedRef.current = true
+      const targets = brush.kind === 'zone' ? [cell] : cellsWithSymmetry(map, cell, symmetry)
+      setMap((prev) => targets.reduce((acc, target) => paintCell(acc, target, brush), prev))
     },
-    [brush],
+    [brush, map, symmetry],
   )
 
   const pointerCell = useCallback(
@@ -234,6 +319,8 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
     }
     draggingRef.current = true
     lastCellRef.current = null
+    dragSnapshotRef.current = map // 松开时若真改过，就用这份快照做一次撤销步
+    paintedRef.current = false
     if (brush.kind === 'zone') {
       dragStartRef.current = cell
       setZonePreview({ player: brush.player, ...rectFromCells(cell, cell) })
@@ -257,23 +344,29 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
 
   const endDrag = (): void => {
     if (brush.kind === 'zone' && zonePreview) {
-      setMap((prev) => {
-        const next = cloneMap(prev)
-        while (next.deployZones.length <= zonePreview.player) {
-          next.deployZones.push({ x0: 0, y0: 0, x1: 1, y1: 1 })
-        }
-        next.deployZones[zonePreview.player] = {
-          x0: zonePreview.x0,
-          y0: zonePreview.y0,
-          x1: zonePreview.x1,
-          y1: zonePreview.y1,
-        }
-        return next
-      })
+      const snapshot = dragSnapshotRef.current
+      const draft = cloneMap(map)
+      // 补足该玩家的部署区（玩家数增加后才可能出现下标越界）
+      while (draft.deployZones.length <= zonePreview.player) {
+        draft.deployZones.push({ x0: 0, y0: 0, x1: 1, y1: 1 })
+      }
+      draft.deployZones[zonePreview.player] = {
+        x0: zonePreview.x0,
+        y0: zonePreview.y0,
+        x1: zonePreview.x1,
+        y1: zonePreview.y1,
+      }
+      if (snapshot) pushHistory(snapshot)
+      setMap(draft)
+    } else if (paintedRef.current && dragSnapshotRef.current) {
+      // 一次拖拽 = 一步撤销
+      pushHistory(dragSnapshotRef.current)
     }
     draggingRef.current = false
     dragStartRef.current = null
     lastCellRef.current = null
+    dragSnapshotRef.current = null
+    paintedRef.current = false
     setZonePreview(null)
   }
 
@@ -281,7 +374,7 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
 
   const changePlayers = (players: number): void => {
     const { map: next, removedBuildings } = withPlayerCount(map, players)
-    setMap(next)
+    commit(next)
     if (removedBuildings > 0) {
       setMessage(`减少玩家后，${removedBuildings} 个原来属于该玩家的据点被移除`)
     }
@@ -289,7 +382,7 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
 
   const changeSize = (width: number, height: number): void => {
     const { map: resized, droppedBuildings } = resizeMap(map, width, height)
-    setMap(resized)
+    commit(resized)
     if (droppedBuildings > 0) {
       setMessage(`缩小尺寸后，${droppedBuildings} 个超出范围的据点被移除`)
     }
@@ -339,6 +432,7 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
       }),
     )
     setSavedId(null)
+    clearHistory() // 换了一张图，旧的撤销栈不再适用
     setMessage('已新建模板：24×24 两人图（上下部署带 + 中间村落）')
   }
 
@@ -346,6 +440,7 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
     const copy = cloneMap(record)
     setMap(copy)
     setSavedId(record.id)
+    clearHistory()
     setMessage('已打开「' + record.name + '」')
   }
 
@@ -386,18 +481,42 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
     setShowImport(true)
   }
 
+  /**
+   * 复制**分享码**：压缩过的一串短文本，好友粘贴进导入框就能拿到同一张图。
+   *
+   * 与"导出 JSON"的区别：分享码**保留原 id** —— 两端导入后 id 相同，
+   * 于是大厅选图时能选中同一张自制地图，这是"自制图也能联机"的前提。
+   * （JSON 导入会把外来 id 换成新的，避免覆盖内置地图。）
+   */
+  const doCopyShareCode = (): void => {
+    const code = encodeShareCode(map)
+    setImportText(code)
+    setShowImport(true)
+    void navigator.clipboard?.writeText(code).then(
+      () => setMessage(`分享码已复制（${code.length} 字符）—— 发给好友，他粘进导入框即可`),
+      () => setMessage('复制失败：分享码已填进下方文本框，手动全选复制即可'),
+    )
+  }
+
   const doImport = (): void => {
-    const result = parseMapJson(importText)
+    const text = importText.trim()
+    const shareCode = isShareCode(text)
+    const result = shareCode ? decodeShareCode(text) : parseMapJson(text)
     if (!result.ok) {
       setMessage('导入失败：' + result.errors.join('；'))
       return
     }
     const imported = cloneMap(result.map)
-    // 导入的地图统一换成自制 id：避免覆盖内置地图，也避免和别人撞 id
+    // 分享码里的自制地图保留原 id（两端一致才能联机）；内置地图的副本与 JSON 导入则换成新 id
     if (!isUserMapId(imported.id)) imported.id = newUserMapId()
     setMap(imported)
     setSavedId(null)
-    setMessage('已载入「' + imported.name + '」，确认无误后点「保存到本机」')
+    clearHistory()
+    setMessage(
+      shareCode
+        ? '已载入「' + imported.name + '」（分享码）—— 联机时房主选它即可，前提是所有人都导入过'
+        : '已载入「' + imported.name + '」，确认无误后点「保存到本机」',
+    )
   }
 
   /**
@@ -580,9 +699,35 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
             </button>
           ))}
         </div>
+
+        <div className="editor-row">
+          <span className="muted small">对称绘制（只作用于地形与据点）</span>
+          {SYMMETRY_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              data-testid={'editor-symmetry-' + option.value}
+              className={symmetry === option.value ? 'picked' : ''}
+              onClick={() => setSymmetry(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="panel">
+        <div className="editor-row">
+          <button type="button" data-testid="editor-undo" disabled={past.length === 0} onClick={undo}>
+            ↶ 撤销
+          </button>
+          <button type="button" data-testid="editor-redo" disabled={future.length === 0} onClick={redo}>
+            ↷ 重做
+          </button>
+          <span className="muted small" data-testid="editor-history">
+            {past.length === 0 ? '一次拖拽 = 一步（Ctrl+Z / Ctrl+Shift+Z）' : `可撤销 ${past.length} 步`}
+          </span>
+        </div>
         <div className="editor-canvas-wrap">
           <canvas
             ref={canvasRef}
@@ -688,8 +833,16 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
       </section>
 
       <section className="panel">
-        <h2>导入 / 导出</h2>
+        <h2>分享 / 导入导出</h2>
+        <p className="muted small">
+          <b>分享码</b>是一串短文本：好友粘进下面的导入框就能拿到同一张图，并且 <b>id 保持一致</b> ——
+          这样房主在大厅选它时，双方手里的是同一张地图（自制地图**联机**就靠这个）。
+          「导出 JSON 文件」则是给"想把它变成内置地图"用的（放进 <code>src/data/maps/</code> 并登记）。
+        </p>
         <div className="editor-row">
+          <button type="button" className="primary" data-testid="editor-share-code" onClick={doCopyShareCode}>
+            复制分享码
+          </button>
           <button type="button" data-testid="editor-export" onClick={doExport}>
             导出 JSON 文件
           </button>
@@ -697,7 +850,7 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
             复制 JSON
           </button>
           <button type="button" data-testid="editor-toggle-import" onClick={() => setShowImport((v) => !v)}>
-            {showImport ? '收起导入框' : '粘贴 JSON 导入'}
+            {showImport ? '收起导入框' : '粘贴分享码 / JSON 导入'}
           </button>
         </div>
         {showImport ? (
@@ -706,7 +859,7 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
               data-testid="editor-import-text"
               rows={6}
               value={importText}
-              placeholder="把地图 JSON 粘到这里，然后点下面的「载入」"
+              placeholder="把好友发来的分享码（ATM1:...）或地图 JSON 粘到这里，然后点「载入」"
               onChange={(e) => setImportText(e.target.value)}
             />
             <button type="button" data-testid="editor-import" onClick={doImport}>

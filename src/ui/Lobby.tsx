@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ROOM_CODE_LENGTH, normalizeRoomCode, randomRoomCode, isValidRoomCode } from '../app/roomCode'
-import { MAP_LIST, defaultMapFor } from '../game/data'
+import { defaultMapFor } from '../game/data'
+import { listLobbyMaps } from '../app/mapStore'
 import type { Identity } from '../app/identity'
 import type { RoomView } from '../net/roomSession'
 import type { SignalStrategy, TransportKind } from '../net/types'
@@ -48,6 +49,12 @@ export function Lobby({
   actions,
   onNavigate,
 }: LobbyProps) {
+  /**
+   * 可选地图：内置 + **本机已导入的自制图**。
+   * 自制图没有随产物分发，所以选它之前要确认所有人都导入了同一张（界面上会提示）。
+   */
+  const mapOptions = useMemo(() => listLobbyMaps(), [])
+  const selectedMap = mapOptions.find((m) => m.id === view.mapId)
   const [nickname, setNickname] = useState(identity.nickname)
   const [code, setCode] = useState(initialRoomCode ?? '')
   const [password, setPassword] = useState(initialRoomKey ?? '')
@@ -303,7 +310,7 @@ export function Lobby({
                 </button>
                 <span className="muted small" data-testid="start-hint">
                   {view.canStart
-                    ? '全员已准备，可以开始（' + MAP_LIST.find((m) => m.id === (view.mapId ?? defaultMapFor(view.players.length)))?.name + '）'
+                    ? '全员已准备，可以开始（' + (mapOptions.find((m) => m.id === (view.mapId ?? defaultMapFor(view.players.length)))?.name ?? '地图') + '）'
                     : '等待所有玩家准备（2–4 人）'}
                 </span>
               </>
@@ -352,18 +359,33 @@ export function Lobby({
                   <option value="">
                     自动（按人数：{view.players.filter((p) => p.connected).length <= 2 ? '古道渡口 2 人' : '四战之地 4 人'}）
                   </option>
-                  {MAP_LIST.map((map) => (
+                  {mapOptions.filter((m) => !m.custom).map((map) => (
                     <option key={map.id} value={map.id}>
                       {map.name}（{map.width}×{map.height} · {map.players} 人）
                     </option>
                   ))}
+                  {mapOptions.some((m) => m.custom) ? (
+                    <optgroup label="我的自制地图（需所有人都导入同一张）">
+                      {mapOptions.filter((m) => m.custom).map((map) => (
+                        <option key={map.id} value={map.id}>
+                          {map.name}（{map.width}×{map.height} · {map.players} 人）
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
                 </select>
               ) : (
                 <span className="muted small" data-testid="map-label">
-                  {view.mapId ? (MAP_LIST.find((m) => m.id === view.mapId)?.name ?? view.mapId) : '由房主决定'}
+                  {view.mapId ? (mapOptions.find((m) => m.id === view.mapId)?.name ?? view.mapId) : '由房主决定'}
                 </span>
               )}
             </label>
+            {view.isHost && selectedMap?.custom ? (
+              <p className="muted small" data-testid="map-custom-hint">
+                这是自制地图：**其他玩家必须先导入同一张图**（把编辑器里的「分享码」发给他们粘贴），
+                否则他们那边没有这张地图、进不了这一局。
+              </p>
+            ) : null}
 
             {debug.canUseLocal ? (
               <span className="muted small" data-testid="transport-label">

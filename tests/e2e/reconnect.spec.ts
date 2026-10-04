@@ -98,7 +98,7 @@ test.describe('断线重连（本地传输）', () => {
     await expect.poll(async () => (await stateOf(alice)).units.find((u) => u.owner === 'p-b')?.y).toBe(16)
   })
 
-  test('对手关闭页面 → 轮到他时房主可跳过其回合', async ({ context }) => {
+  test('对手关闭页面 → 轮到他时房主可让 AI 代打，也可跳过其回合', async ({ context }) => {
     const { alice, bob } = await startGameAndMove(context)
 
     await bob.close()
@@ -109,10 +109,24 @@ test.describe('断线重连（本地传输）', () => {
     await expect(alice.getByTestId('pause-banner')).toContainText('对手已断线')
     await expect(alice.getByTestId('skip-turn')).toBeVisible()
 
+    // ① AI 代打：逐拍推进，跑完掉线者的整个回合后把控制权交还房主
+    await expect(alice.getByTestId('takeover-turn')).toBeVisible()
+    await alice.getByTestId('takeover-turn').click()
+    await expect(alice.getByTestId('pause-banner')).toContainText('AI 正在代打')
+    await expect(alice.getByTestId('takeover-turn')).toBeDisabled()
+    await expect(alice.getByTestId('end-turn')).toBeEnabled({ timeout: 30_000 })
+    await expect(alice.getByTestId('pause-banner')).toHaveCount(0)
+    // 托管不等于删号：掉线玩家的部队仍在场上。
+    // （注意 AI 是**按它自己的回合完整打**的：会走位、也会用军费生产，所以数量可能变多 ——
+    //   这正是"托管"与"跳过"的区别：那一方不会白站一局。）
+    expect((await stateOf(alice)).units.filter((u) => u.owner === 'p-b').length).toBeGreaterThanOrEqual(1)
+
+    // ② 再轮到掉线者时，房主也可以直接跳过（原来的路径没有被替代）
+    await alice.getByTestId('end-turn').click()
+    await expect(alice.getByTestId('pause-banner')).toBeVisible({ timeout: 20_000 })
     await alice.getByTestId('skip-turn').click()
     await expect(alice.getByTestId('end-turn')).toBeEnabled({ timeout: 20_000 })
     await expect(alice.getByTestId('pause-banner')).toHaveCount(0)
-    // 掉线玩家的部队仍在场上（席位与兵力都保留）
-    expect((await stateOf(alice)).units.filter((u) => u.owner === 'p-b')).toHaveLength(1)
+    expect((await stateOf(alice)).units.filter((u) => u.owner === 'p-b').length).toBeGreaterThanOrEqual(1)
   })
 })

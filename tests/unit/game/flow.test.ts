@@ -17,10 +17,13 @@ function expectCode(result: ReturnType<typeof run>, code: string) {
 }
 
 describe('部署阶段', () => {
-  it('预算上限：3000 预算买不起 4000 的重骑兵', () => {
+  it('预算上限：用满 4000 预算后不能再部署', () => {
     const s = newGame(data)
-    expect(s.deploy[P1].budget).toBe(3000)
-    expectCode(run(s, P1, { type: 'deploy', unitType: 'heavyCav', x: 2, y: 7 }, data), 'DEPLOY_BUDGET_EXCEEDED')
+    expect(s.deploy[P1].budget).toBe(4000)
+    // 重骑兵 4000 = 一整个部署预算：放一个就花光
+    const spent = must(run(s, P1, { type: 'deploy', unitType: 'heavyCav', x: 2, y: 7 }, data))
+    expect(spent.deploy[P1].budget).toBe(0)
+    expectCode(run(spent, P1, { type: 'deploy', unitType: 'sword', x: 3, y: 7 }, data), 'DEPLOY_BUDGET_EXCEEDED')
   })
 
   it('数量上限：预算充足时最多部署 4 个单位', () => {

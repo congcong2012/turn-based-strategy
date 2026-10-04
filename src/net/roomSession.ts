@@ -35,6 +35,8 @@ import { describeTransportError } from './transportErrorText'
 import type { ManualRole, ManualTransport } from './manualTransport'
 import { defaultStorage, loadGame, saveGame } from './gameStore'
 import type { GameStorage } from './gameStore'
+import { MAX_AI_STEPS, nextCommand } from '../ai'
+import type { Difficulty } from '../ai'
 import { applyCommand } from '../game/commands'
 import { defaultMapFor } from '../game/data'
 import { describeErrorCode } from '../game/errorText'
@@ -59,6 +61,13 @@ import type {
 
 const TICK_MS = 250
 const HELLO_RETRY_MS = 3000
+
+/** 掉线托管的每步间隔：与单人练习同款节奏，让牌桌上看得清 AI 在动 */
+const TAKEOVER_STEP_MS = 450
+/** 托管一个回合最多走多少步（兜底，绝不死循环） */
+const TAKEOVER_MAX_STEPS = MAX_AI_STEPS
+/** 托管用哪一档 AI：取「普通」—— 不掉线的人既不该被更强的 AI 惩罚，也不该被白送 */
+const TAKEOVER_DIFFICULTY: Difficulty = 'normal'
 const HELLO_MAX_ATTEMPTS = 8
 
 export interface RoomView {
@@ -100,6 +109,10 @@ export interface RoomView {
   pausedReason: 'none' | 'host-offline' | 'player-offline'
   /** M3：房主可以把掉线玩家的回合跳过 */
   canSkipTurn: boolean
+  /** 房主可以让 AI **代打**掉线玩家的整个回合（比"跳过"更不伤那一方） */
+  canTakeOver: boolean
+  /** 正在被 AI 代打的玩家（null = 没有托管在跑） */
+  takeoverPlayerId: PlayerId | null
   /** M3：掉线中的玩家（对局进行时保留席位） */
   offlinePlayers: PlayerId[]
   /** M3：中文战报（最新在最后） */
@@ -147,6 +160,8 @@ export interface RoomSession {
   sendCommand: (cmd: Command) => void
   /** 房主：跳过掉线玩家的回合（仅当其确实掉线时可用） */
   skipDisconnectedTurn: () => void
+  /** 让 AI 代打掉线玩家的这一整个回合（仅房主可用） */
+  takeOverDisconnectedTurn: () => void
   /** M7：手动直连（公共信令不可用时的备用方案）——开始配对 */
   startManualPairing: (roomCode: string, role: ManualRole) => Promise<void>
   /** M7：提交对方给的连接码（好友：邀请码；房主：应答码） */
@@ -177,6 +192,13 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   let helloAttempts = 0
   let lastHelloAt = 0
   let disposed = false
+  /**
+   * 掉线托管的运行状态：正在被 AI 代打的玩家 + 已代打步数。
+   * 用 setTimeout 逐拍推进（而不是一口气跑完），这样牌桌上能看清 AI 的动作，
+   * 也能在掉线者中途回来时立刻交还控制权。
+   */
+  let takeover: { playerId: PlayerId; steps: number } | null = null
+  let takeoverTimer: ReturnType<typeof setTimeout> | null = null
   /**
    * 会话已作废（leave 之后）。
    * 为什么需要它：join() 里 `await transportFactory(...)` 可能要几百毫秒（动态 import + 建连），
@@ -288,6 +310,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       paused: pausedReason !== 'none',
       pausedReason,
       canSkipTurn: isHost() && currentOffline && game?.phase === 'PLAYING',
+      canTakeOver: isHost() && currentOffline && game?.phase === 'PLAYING' && takeover === null,
+      takeoverPlayerId: takeover?.playerId ?? null,
       offlinePlayers: players.filter((p) => !p.connected).map((p) => p.playerId),
       log: journal.log,
       events: journal.events,
@@ -333,8 +357,94 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   }
 
   /** 房主：执行一条指令（本地或来自客户端的意图），并把结果广播出去 */
-  function runCommand(playerId: PlayerId, cmd: Command, peerId?: PeerId): void {
-    if (!game || !isHost()) return
+  // ------------------------------------------------------------------ 掉线托管
+
+  /**
+   * 让 AI 代打掉线玩家的**这一整个回合**（仅房主执行，结果照常广播）。
+   *
+   * 为什么值得单独做（而不是只有"跳过其回合"）：好友局最难凑的是"所有人同时在线"，
+   * 一个人接电话/断网就白站一局，其他人还得替他点跳过。既然已经有现成的 AI
+   * （公平、纯函数、不读任何隐藏信息），交给它代打一回合是最不伤体验的兜底。
+   *
+   * 关键点：
+   *  - **逐拍推进**（450ms 一步）：一口气跑完会在牌桌上"闪现"，也来不及在掉线者回来时收手；
+   *  - 掉线者中途重连 → 立刻停止并交还控制权；
+   *  - 步数上限 + "rev 没变说明指令被拒"双保险，绝不把整局卡在托管里。
+   */
+  function stopTakeover(): void {
+    if (takeoverTimer !== null) {
+      clearTimeout(takeoverTimer)
+      takeoverTimer = null
+    }
+    takeover = null
+  }
+
+  function scheduleTakeoverStep(): void {
+    if (takeoverTimer !== null || disposed) return
+    takeoverTimer = setTimeout(stepTakeover, TAKEOVER_STEP_MS)
+  }
+
+  function stepTakeover(): void {
+    takeoverTimer = null
+    if (disposed || !game || game.phase !== 'PLAYING' || !takeover) return
+
+    const actor = game.players[game.turnIndex]
+    if (actor !== takeover.playerId) {
+      notice = 'AI 代打结束：回合已交接'
+      stopTakeover()
+      emit()
+      return
+    }
+    if (isPlayerConnected(actor)) {
+      notice = '掉线玩家已重连，控制权已交还'
+      stopTakeover()
+      emit()
+      return
+    }
+
+    takeover.steps += 1
+    if (takeover.steps > TAKEOVER_MAX_STEPS) {
+      runCommand(actor, { type: 'endTurn' })
+      notice = 'AI 代打结束（已达单回合步数上限）'
+      stopTakeover()
+      emit()
+      return
+    }
+
+    const cmd = nextCommand(game, actor, TAKEOVER_DIFFICULTY)
+    // ⚠️ 别用 `state.rev` 判断指令有没有生效：`wait` 分支**不会**自增 rev（commands.ts 里
+    //    其它分支都有 `s.rev += 1`，只有它没有），拿 rev 当代理会把合法的 wait 误判成"被拒"，
+    //    于是托管第一步就停、回合永远交不出去。直接用 runCommand 的真实返回值。
+    if (!runCommand(actor, cmd)) {
+      // 指令被拒（理论上不该发生）：停手，别把整局拖进死循环。
+      // 带上指令类型，出问题时一眼能看出是哪一类动作不合法。
+      notice = 'AI 代打中止：' + cmd.type + ' 指令被拒绝'
+      stopTakeover()
+      emit()
+      return
+    }
+    if (cmd.type === 'endTurn' || game.phase !== 'PLAYING') {
+      notice = 'AI 已代打完这一回合'
+      stopTakeover()
+      emit()
+      return
+    }
+    scheduleTakeoverStep()
+  }
+
+  function beginTakeover(): void {
+    if (disposed || !isHost() || !game || game.phase !== 'PLAYING') return
+    const current = game.players[game.turnIndex]
+    if (isPlayerConnected(current) || takeover !== null) return
+    takeover = { playerId: current, steps: 0 }
+    notice = '掉线玩家的回合交给 AI 代打…'
+    emit()
+    scheduleTakeoverStep()
+  }
+
+  /** 执行一条指令（房主侧）。返回**是否被接受** —— 掉线托管要靠它判断该不该继续。 */
+  function runCommand(playerId: PlayerId, cmd: Command, peerId?: PeerId): boolean {
+    if (!game || !isHost()) return false
     if (game.phase === 'DEPLOY' && cmd.type === 'deployDone') {
       // 允许房主/客户端在部署阶段随时确认
     }
@@ -343,7 +453,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       if (peerId) transport?.send({ t: 'cmdRejected', from: selfId, code: result.code }, peerId)
       else recordError('指令被拒绝：' + describeErrorCode(result.code))
       emit()
-      return
+      return false
     }
     const before = game
     game = result.state
@@ -351,6 +461,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
     if (roomCode) saveGame(storage, roomCode, game)
     broadcastGame(result.events)
     emit()
+    return true
   }
 
   /**
@@ -869,6 +980,10 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       runCommand(current, { type: 'endTurn' })
     },
 
+    takeOverDisconnectedTurn(): void {
+      beginTakeover()
+    },
+
     setMap(mapId: string | null): void {
       if (!isHost() || !lobby) return
       lobby = lobbySetMapId(lobby, mapId)
@@ -890,6 +1005,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
     dispose(): void {
       disposed = true
+      stopTakeover()
       if (timer) clearInterval(timer)
       timer = null
       void transport?.leave()

@@ -117,9 +117,9 @@ describe('AI · 合法性', () => {
     }
   })
 
-  it('"普通"难度会按计划放满 3 个单位（3000 预算用尽）', () => {
+  it('"普通"难度会按计划放满 4 个单位（4000 预算用尽）', () => {
     const { state } = playUntilTurnEnds(newGame(data), P1, 'normal', 5)
-    expect(unitsOf(state, P1).length).toBe(3)
+    expect(unitsOf(state, P1).length).toBe(4)
   })
 })
 
@@ -225,9 +225,9 @@ describe('AI · 困难档', () => {
     expect(state.phase).toBe('GAME_OVER')
   })
 
-  it('困难档会按计划放满 3 个单位', () => {
+  it('困难档会按计划放满 4 个单位', () => {
     const { state } = playUntilTurnEnds(newGame(data), P1, 'hard', 5)
-    expect(unitsOf(state, P1).length).toBe(3)
+    expect(unitsOf(state, P1).length).toBe(4)
   })
 
   it('单步决策耗时可控：中盘（单位不少）也要在预算内', () => {
@@ -270,9 +270,9 @@ describe('AI · 大师档（切片 3 · 评估器 v3）', () => {
     expect(state.phase).toBe('GAME_OVER')
   }, 120_000)
 
-  it('大师档会按计划放满 3 个单位', () => {
+  it('大师档会按计划放满 4 个单位', () => {
     const { state } = playUntilTurnEnds(newGame(data), P1, 'master', 5)
-    expect(unitsOf(state, P1).length).toBe(3)
+    expect(unitsOf(state, P1).length).toBe(4)
   })
 
   it('大师档对局中从不投降', () => {
@@ -287,9 +287,9 @@ describe('AI · 神谕档（切片 4 · 回合级 rollout）', () => {
    * oracle 单步要跑整回合 rollout，真实地图一局就要数分钟，放进单测太慢。
    * 这里只守：部署计划与 hard 一致、不投降（整局合法性/终止性由 `rollout.test.ts` 与 `it.each` 覆盖）。
    */
-  it('神谕档会按计划放满 3 个单位', () => {
+  it('神谕档会按计划放满 4 个单位', () => {
     const { state } = playUntilTurnEnds(newGame(data), P1, 'oracle', 5)
-    expect(unitsOf(state, P1).length).toBe(3)
+    expect(unitsOf(state, P1).length).toBe(4)
   })
 
   it('神谕档对局中从不投降', () => {
@@ -314,9 +314,9 @@ describe('AI · 专家档（切片 2 · 搜索层）', () => {
     expect(commands.some((c) => c.type === 'resign')).toBe(false)
   })
 
-  it('专家档会按计划放满 3 个单位（部署策略与 hard 同源）', () => {
+  it('专家档会按计划放满 4 个单位（部署策略与 hard 同源）', () => {
     const { state } = playUntilTurnEnds(newGame(data), P1, 'expert', 5)
-    expect(unitsOf(state, P1).length).toBe(3)
+    expect(unitsOf(state, P1).length).toBe(4)
   })
 
   it('单步决策耗时可控：即便搜索也要远低于"整回合 ≤30s"的允许值', () => {

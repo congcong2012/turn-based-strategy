@@ -240,6 +240,7 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
         sessionRef.current?.sendCommand(cmd)
       },
       skipDisconnectedTurn: noop,
+      takeOverDisconnectedTurn: noop,
       setMap: noop,
       startManualPairing: noop,
       submitManualCode: noop,

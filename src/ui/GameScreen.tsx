@@ -376,12 +376,24 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
               <span>
                 {view.pausedReason === 'host-offline'
                   ? '房主已断线，游戏暂停，等待其重连…（刷新页面不影响，房主回来后自动继续）'
-                  : '对手已断线，等待重连…（对局与你的操作都已保留）'}
+                  : view.takeoverPlayerId
+                    ? '这位玩家掉线中：AI 正在代打它的回合（他回来就立刻交还控制权）'
+                    : '对手已断线，等待重连…（对局与你的操作都已保留）'}
               </span>
               {view.canSkipTurn ? (
-                <button type="button" data-testid="skip-turn" onClick={() => actions.skipDisconnectedTurn()}>
-                  跳过其回合
-                </button>
+                <>
+                  <button
+                    type="button"
+                    data-testid="takeover-turn"
+                    disabled={view.takeoverPlayerId !== null}
+                    onClick={() => actions.takeOverDisconnectedTurn()}
+                  >
+                    {view.takeoverPlayerId ? 'AI 代打中…' : 'AI 代打这一回合'}
+                  </button>
+                  <button type="button" data-testid="skip-turn" onClick={() => actions.skipDisconnectedTurn()}>
+                    跳过其回合
+                  </button>
+                </>
               ) : null}
             </div>
           ) : null}
