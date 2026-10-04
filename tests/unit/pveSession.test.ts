@@ -2,8 +2,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { createPveSession, describePveMatch, normalizeConfig, PVE_HUMAN_ID } from '../../src/app/pveSession'
-import type { PveConfig, PvePersistReason, PveSaveData, PveSession } from '../../src/app/pveSession'
+import type { AiThinker, PveConfig, PvePersistReason, PveSaveData, PveSession } from '../../src/app/pveSession'
 import { nextCommand } from '../../src/ai'
+import { mulberry32 } from '../../src/ai/rng'
+import { DATA } from '../../src/game/data'
 import { currentPlayer } from '../../src/game/state'
 import type { GameState } from '../../src/game/types'
 import type { RoomView } from '../../src/net/roomSession'
@@ -333,3 +335,84 @@ function playToEndWith(session: PveSession): { winner: string | null; round: num
   const game = session.getView().game as GameState
   return { winner: game.winner, round: game.round }
 }
+
+describe('pveSession · 异步"思考"（Web Worker 路径）', () => {
+  /**
+   * 异步实现：与默认实现**同入参、同算法**，只是把结果包成 Promise ——
+   * 这正是 Worker 的语义（把纯函数搬到另一个线程）。
+   */
+  const asyncThink: AiThinker = (task) =>
+    Promise.resolve(nextCommand(task.state, task.playerId, task.difficulty, DATA, mulberry32(task.seed)))
+
+  /** 把在途的 Promise 链跑完（同步调度器 + 异步思考的组合下，推进靠微任务） */
+  async function settle(rounds = 600): Promise<void> {
+    for (let i = 0; i < rounds; i += 1) await Promise.resolve()
+  }
+
+  function sessionWith(aiThink?: AiThinker): PveSession {
+    return createPveSession({ config: baseConfig(), schedule: syncSchedule, actionDelayMs: 0, aiThink })
+  }
+
+  /** 让人类一侧把部署走完（用 nextCommand 代打，避免手写部署坐标） */
+  function deployAsHuman(session: PveSession): void {
+    for (let i = 0; i < 20; i += 1) {
+      const view = session.getView()
+      const game = view.game as GameState
+      if (game.phase !== 'DEPLOY') return
+      if (game.deploy[view.selfId]?.done) return
+      session.sendCommand(nextCommand(game, view.selfId, 'normal'))
+    }
+  }
+
+  it('注入异步思考后，AI 依然能走完回合并把控制权交回人类（不假死）', async () => {
+    const session = sessionWith(asyncThink)
+    deployAsHuman(session)
+    await settle()
+
+    const game = session.getView().game as GameState
+    expect(game.phase).toBe('PLAYING')
+    expect(session.getView().myTurn).toBe(true)
+  })
+
+  it('异步路径与同步路径走出的棋完全一致（战报逐条相同）', async () => {
+    const sync = sessionWith()
+    deployAsHuman(sync)
+
+    const asyncSession = sessionWith(asyncThink)
+    deployAsHuman(asyncSession)
+    await settle()
+
+    // 人类结束回合，逼 AI 再走一轮；两条路径都要跑完整
+    sync.sendCommand({ type: 'endTurn' })
+    asyncSession.sendCommand({ type: 'endTurn' })
+    await settle()
+
+    expect(asyncSession.getView().log).toEqual(sync.getView().log)
+    expect((asyncSession.getView().game as GameState).rev).toBe((sync.getView().game as GameState).rev)
+  })
+
+  it('等待思考期间人类认输：迟到的 AI 指令不落子（局面不会被旧指令污染）', async () => {
+    const session = sessionWith(asyncThink)
+    deployAsHuman(session)
+    // 刻意不等 AI 思考完就认输
+    session.sendCommand({ type: 'resign' })
+    const afterResign = session.getView().game as GameState
+    await settle()
+    const afterSettle = session.getView().game as GameState
+
+    expect(afterSettle.rev).toBe(afterResign.rev)
+    expect(afterSettle.phase).toBe('GAME_OVER')
+  })
+
+  it('思考抛错时兜底结束该 AI 的回合，不会把整局卡死', async () => {
+    const session = sessionWith(() => {
+      throw new Error('思考炸了')
+    })
+    deployAsHuman(session)
+    await settle()
+
+    const game = session.getView().game as GameState
+    expect(game.phase).toBe('PLAYING')
+    expect(session.getView().myTurn).toBe(true)
+  })
+})

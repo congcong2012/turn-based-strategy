@@ -20,6 +20,7 @@ import type { Journal } from '../game/journal'
 import { nextCommand, MAX_AI_STEPS } from '../ai'
 import type { Difficulty } from '../ai'
 import { hashSeed, mulberry32 } from '../ai/rng'
+import type { AiTask } from '../ai/workerProtocol'
 import type { Command, GameState, PlayerId } from '../game/types'
 import type { LobbyPlayer, RoomRole, SignalStrategy, TransportKind, TransportStatus } from '../net/types'
 import type { ConnectionState } from '../net/connectionState'
@@ -52,6 +53,11 @@ export const DEFAULT_ACTION_DELAY_MS = 450
 
 type Scheduler = (fn: () => void, ms: number) => () => void
 
+/** 区分"同步返回的指令"与"异步（Worker）返回的指令" */
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as Promise<T>)?.then === 'function'
+}
+
 const defaultScheduler: Scheduler = (fn, ms) => {
   const handle = setTimeout(fn, ms)
   return () => clearTimeout(handle)
@@ -75,6 +81,13 @@ export type PvePersistReason = 'human' | 'ai' | 'system' | 'ended'
 /** 从存档恢复所需的全部内容 */
 export type PveRestore = PveSaveData
 
+/**
+ * "AI 思考"的可注入实现。
+ * 同步实现 = 主线程直接算（默认）；异步实现 = 送到 Web Worker。
+ * 两种实现的**入参相同、结果必然相同**（`nextCommand` 是纯函数）。
+ */
+export type AiThinker = (task: AiTask) => Command | Promise<Command>
+
 export interface PveSessionOptions {
   /** 开新局用；与 `restore` 二选一 */
   config?: PveConfig
@@ -88,6 +101,15 @@ export interface PveSessionOptions {
   actionDelayMs?: number
   /** 可注入的调度器：测试可传同步实现，从而不需要 await */
   schedule?: Scheduler
+  /**
+   * 可注入的"AI 思考"实现。**默认在主线程同步计算**（与改造前逐字一致），
+   * 真实应用由 `usePveGame` 注入 Web Worker 版本。
+   *
+   * 之所以把默认值留在主线程：单测与评估台大量依赖"调用后立刻可见"的同步语义；
+   * 而 Worker 只是把**同样的纯函数计算**挪到另一个线程，结果不会变。
+   * 返回 Promise 时，本会话会等它回来再推进（并在等待期间丢弃过期结果）。
+   */
+  aiThink?: AiThinker
   onChange?: (view: RoomView) => void
   /**
    * 需要落盘时回调。会话本身**不碰 localStorage**（注入进来才可纯单测）；
@@ -152,6 +174,8 @@ export function createPveSession(options: PveSessionOptions): PveSession {
   const aiNickname = options.aiNickname ?? ((ordinal: number) => AI_NAMES[ordinal] ?? '电脑' + (ordinal + 1))
   const actionDelayMs = options.actionDelayMs ?? DEFAULT_ACTION_DELAY_MS
   const schedule = options.schedule ?? defaultScheduler
+  /** 如果走 Worker，这里存着"在途的那次思考"，用来丢弃过期结果 */
+  let pendingThink: Promise<Command> | null = null
 
   if (!options.config && !options.restore) {
     throw new Error('createPveSession：必须提供 config（新开一局）或 restore（从存档恢复）')
@@ -302,16 +326,47 @@ export function createPveSession(options: PveSessionOptions): PveSession {
   }
 
   /**
-   * AI 的随机数：**无状态派生**，每次决策都按"种子 + 当前局面 + 谁在决策"现算一个生成器。
+   * AI 的随机数种子：**无状态派生**，每次决策都按"种子 + 当前局面 + 谁在决策"现算。
    *
    * 为什么不用"开局建一次、整局复用同一个生成器"：那种写法的内部游标没法序列化，
    * 一旦刷新页面恢复对局，AI 会从随机数序列的头部重来，走出与刷新前不同的分支。
    * 改成纯函数派生后，同一个 (种子, 局面) 必然得到同一个决策 —— 刷新前后逐帧一致。
+   *
+   * 抽成 `aiSeed` 是为了跨线程：**函数没法 structured-clone，种子可以** ——
+   * Worker 侧用同一个种子还原出逐位相同的随机序列。
    */
+  function aiSeed(playerId: PlayerId): number {
+    return hashSeed(config.seed, state.rev, state.turnSeq, state.turnIndex, playerId, config.difficulty)
+  }
+
   function aiRng(playerId: PlayerId): () => number {
-    return mulberry32(
-      hashSeed(config.seed, state.rev, state.turnSeq, state.turnIndex, playerId, config.difficulty),
-    )
+    return mulberry32(aiSeed(playerId))
+  }
+
+  /** 组装一次"AI 思考"任务（默认实现与 Worker 实现用的是同一份入参） */
+  function aiTaskFor(playerId: PlayerId): AiTask {
+    return {
+      state,
+      playerId,
+      difficulty: config.difficulty,
+      seed: aiSeed(playerId),
+      map: getMap(state.mapId, data),
+    }
+  }
+
+  /** 默认实现：主线程同步计算（与加 Worker 之前逐字一致） */
+  function defaultAiThink(task: AiTask): Command {
+    return nextCommand(task.state, task.playerId, task.difficulty, data, mulberry32(task.seed))
+  }
+
+  const think: AiThinker = options.aiThink ?? defaultAiThink
+
+  /** 该 AI 的回合走不动了（思考抛错/失败）时的兜底：交出手，别把整局卡死 */
+  function abortAiTurn(actor: PlayerId): void {
+    apply(actor, { type: 'endTurn' }, 'ai')
+    aiSteps = 0
+    emit()
+    scheduleAi()
   }
 
   /** 行动阶段：AI 走一步，然后（若还轮到 AI）继续排程 */
@@ -354,7 +409,51 @@ export function createPveSession(options: PveSessionOptions): PveSession {
       return
     }
 
-    const cmd = nextCommand(state, actor, config.difficulty, data, aiRng(actor))
+    // 记下"请求发出时"的局面版本：Worker 是异步的，回来时局面可能已经变了
+    const rev = state.rev
+    let result: Command | Promise<Command>
+    try {
+      result = think(aiTaskFor(actor))
+    } catch {
+      // 连思考都抛错（例如地图数据异常）：结束这个 AI 的回合，别把整局卡死
+      abortAiTurn(actor)
+      return
+    }
+
+    if (isPromiseLike(result)) {
+      // 等 Worker 期间不再排程（复用 aiRunning 这个"已有在途推进"的开关）
+      aiRunning = true
+      pendingThink = result
+      result.then(
+        (cmd) => {
+          if (pendingThink !== result) return // 已被 dispose / 重开作废
+          pendingThink = null
+          aiRunning = false
+          if (disposed) return
+          if (state.rev !== rev || state.phase !== 'PLAYING') {
+            // 等待期间局面变了（人类认输/退出/重开…）：这次的指令作废，
+            // 但要把 AI 链交还给"现在该动的人"，否则会停在假死状态。
+            if (state.phase === 'PLAYING' && currentPlayer(state) !== humanId) scheduleAi()
+            return
+          }
+          finishAiStep(actor, cmd)
+        },
+        () => {
+          if (pendingThink !== result) return
+          pendingThink = null
+          aiRunning = false
+          if (disposed || state.rev !== rev) return
+          abortAiTurn(actor)
+        },
+      )
+      return
+    }
+
+    finishAiStep(actor, result)
+  }
+
+  /** 拿到 AI 的指令之后：落子、广播、继续排程 */
+  function finishAiStep(actor: PlayerId, cmd: Command): void {
     aiSteps += 1
     apply(actor, cmd, 'ai')
     emit()
@@ -407,6 +506,7 @@ export function createPveSession(options: PveSessionOptions): PveSession {
     aiRunning = false
     aiTurnPlayer = null
     aiSteps = 0
+    pendingThink = null // 在途的思考作废（重开一局后旧局面的指令不能落子）
 
     config = normalizeConfig({ ...config, ...patch })
     match = describePveMatch(config, humanId)
@@ -423,6 +523,7 @@ export function createPveSession(options: PveSessionOptions): PveSession {
 
   function dispose(): void {
     disposed = true
+    pendingThink = null
     if (cancelAi) {
       cancelAi()
       cancelAi = null

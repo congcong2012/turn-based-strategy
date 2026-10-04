@@ -22,6 +22,13 @@
 
 ### 变更
 
+- **单人局的 AI 计算搬进 Web Worker**（`src/ai/worker*.ts`）：主线程不再被 AI 占据，界面在 AI 回合里始终可交互。
+  - 边界切在**纯函数** `nextCommand` 上，因此**跨线程不改变任何决策**（同入参 ⇒ 同指令），
+    "刷新后 AI 逐帧可复现"的约束不受影响（跨线程只传派生种子与地图，不传函数）。
+  - **失败即静默回退**：Worker 起不来 / 中途报错 / 内部异常，一律改用主线程同入参重算，
+    棋局不受影响（只是耗时搬回主线程）。因此 E2E 显式断言"确实跑在 Worker 里"，避免打包配置写错却毫无症状。
+  - `createPveSession` 默认仍是主线程同步实现 → 既有单测与对战评估台**零改动**；
+    真实应用由 `usePveGame` 注入 Worker 版本。**在线对战不受影响**（只有单人局会起线程）。
 - `PveConfig` 新增**可选**字段 `mapId`；不写时按人数自动挑内置地图（老存档完全兼容）。
   指定的地图若席位不够（例如 2 人图开 4 人局）会自动回退到内置图，避免后两名玩家没有部署区。
 - 存档校验：指定的地图必须真的存在，否则整档判非法并清掉 —— 而不是等到开局时抛「未知地图」。
@@ -31,8 +38,10 @@
 | 项 | 结果 |
 | --- | --- |
 | 静态检查 `tsc --noEmit` ×2 | ✅ 通过 |
-| 单元测试 | ✅ **345 passed**（33 个文件；新增 mapValidation 19 / mapStore 20 / mapTemplates 8 / pveMapChoice 9，另有 pveStore 难度与 mapId 校验） |
-| E2E `local` | ✅ **38 passed**（新增 `editor.spec.ts` 2 条） |
+| 单元测试 | ✅ **358 passed**（34 个文件；新增 mapValidation 19 / mapStore 20 / mapTemplates 8 / pveMapChoice 9 / aiWorker 8 / pveSession 异步路径 4） |
+| E2E `local` | ✅ **38 passed**（新增 `editor.spec.ts` 2 条；`pve.spec.ts` 增加"AI 确实跑在 Worker 里"的断言） |
+| E2E `preview`（dist + 相对 base） | ✅ **4 passed**（其中"离线开一局单人练习"已推进到 AI 行动，并断言 Worker 生效、全程零外部请求） |
+| 子路径实测（`serve-subpath.mjs` → 4180） | ✅ 驱动到 AI 行动：`aiTransport = worker`、回退原因为 null、零失败请求 |
 | 生产构建 | 见发版时按 `docs/release-checklist.md` 全量执行 |
 
 `editor.spec.ts` 的两条用例：

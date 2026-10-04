@@ -165,6 +165,21 @@ test.describe('单人练习（PVE）', () => {
     // 回合数应已推进
     const state = await gameState(page)
     expect(state.round).toBeGreaterThanOrEqual(2)
+
+    // ★ AI 的决策确实跑在 Web Worker 里。
+    // Worker 是"失败即静默回退到主线程"的（结果一样、游戏照常能玩），
+    // 所以这条断言是唯一能抓住"打包配置坏了导致 Worker 从未生效"的地方。
+    const ai = await page.evaluate(() => {
+      const hook = (
+        globalThis as unknown as {
+          __atPve?: { aiTransport: () => 'worker' | 'main'; aiFallback: () => string | null }
+        }
+      ).__atPve
+      return hook ? { transport: hook.aiTransport(), fallback: hook.aiFallback() } : null
+    })
+    expect(ai).not.toBeNull()
+    expect(ai?.fallback).toBeNull()
+    expect(ai?.transport).toBe('worker')
   })
 
   test('认输即结算，可"再来一局"回到部署阶段，也可退出对局回主页', async ({ page }) => {

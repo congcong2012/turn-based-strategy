@@ -18,6 +18,9 @@
 | `src/ai/index.ts` | **决策入口**：`nextCommand(state, playerId, difficulty, data, rng)`，按档案分派到"一步前瞻 / 搜索 / rollout" | ✅ |
 | `src/ai/search.ts` | 切片 2：beam 极小极大 + α-β + 迭代加深（`expert` 档用） | ✅ |
 | `src/ai/rollout.ts` | 切片 4：回合级 rollout（`oracle` 档用） | ✅ |
+| `src/ai/workerProtocol.ts` | 跨线程协议 + `handleAiRequest`（Worker 里跑的纯函数，可直接单测） | ✅ |
+| `src/ai/workerEntry.ts` | Worker 入口：收请求 → 算 → 回结果；异常一律转成 `ok:false`（否则主线程会一直等） | — |
+| `src/ai/workerClient.ts` | 客户端：`think()` + **失败即回退主线程** + 可注入工厂（单测用假 Worker） | — |
 
 游戏侧接线：
 
@@ -98,19 +101,38 @@ mulberry32(hashSeed(seed, state.rev, state.turnSeq, state.turnIndex, playerId, d
 **延迟口径**：不看单步，看 **AI 一整回合的全部操作 ≤ 30s**。
 换算：`最坏回合 ≈ 单步 max × MAX_AI_STEPS(40)`。
 
-## 5. 线程模型（当前：主线程；Worker 是未做的前置）
+## 5. 线程模型：AI 在 Web Worker 里算（AI-6 已实施）
 
-现状：`nextCommand` 在**主线程同步执行**，但 `pveSession` 用 `schedule()` 把每一步拆成单独的 tick，
-所以每一步之间界面是活的。`easy` / `normal` / `hard` 单步都在毫秒级，玩家无感。
+主线程只负责驱动对局与渲染，**AI 的计算搬到 Worker**：
 
-`oracle` 单步 p50 ≈ 139ms、p95 ≈ 407ms、**max ≈ 1784ms**（加厚对手模型后的配置）
-—— 换算成整回合（`MAX_AI_STEPS = 40`）最坏约 **71s**，远超"整回合 ≤30s"的约定；
-切片 2 验收时还出现过一次**未复现的 `max 8436ms` 离群值**。
+```
+pveSession ──(AiTask)──▶ usePveGame 注入的 aiThink ──▶ workerClient ──postMessage──▶ workerEntry
+   ▲                                                                                      │
+   └────────────────── Command ◀── workerProtocol.handleAiRequest（纯函数）◀──────────────┘
+```
 
-> **因此：任何比 `hard` 重的档，上线前必须先搬进 Web Worker。**（AI-6 待办，尚未实施。）
-> 迁移要点：`nextCommand` 已经是纯函数，Worker 只需 `postMessage({state, playerId, difficulty, seed})`
-> → 回 `{command}`；难点在把 `pveSession` 的 AI 驱动从"同步 `stepAi`"改成"await 结果再 apply"，
-> 且**不能破坏可复现性**（结果只依赖入参，不依赖时序）。
+- **边界选在 `nextCommand`**：它本来就是纯函数，所以跨线程不引入任何语义变化 ——
+  这也是"刷新后 AI 逐帧可复现"仍成立的原因：结果只取决于入参，与线程、时序无关。
+- **跨线程只有两样东西要传**：`state` + **派生种子**（函数没法 structured-clone，种子可以，
+  Worker 侧 `mulberry32(seed)` 还原出逐位相同的序列）+ **地图**（自制地图只存在玩家本地，
+  Worker 里没有；每次请求都带最新的那份，避免"地图改过但缓存了旧版本"）。
+- **失败一定可用**：Worker 起不来 / 中途报错 / 内部回 `ok:false`，一律改为**在主线程用同样入参重算**
+  （纯函数 ⇒ 结果一致），棋局不受影响，只是耗时搬回主线程。
+- **默认仍是主线程**：`createPveSession` 不注入 `aiThink` 时走同步实现，
+  因此既有单测与评估台完全不受影响；**只有真实应用（`usePveGame`）注入 Worker 版本**。
+- **过期结果会被丢弃**：请求发出时记下 `state.rev`，回来时若局面已变（人类认输/退出/重开）就作废，
+  并把 AI 链交还给"现在该动的人"，不会假死。
+
+> ⚠️ 注意 Worker 是"**失败即静默回退**"的：打包配置写错导致 Worker 从未生效时，
+> 游戏照常能玩、没有任何症状。因此 `usePveGame` 在 DEV / `?debug` 下暴露 `__atPve.aiTransport()`，
+> 由 `tests/e2e/pve.spec.ts` 与 `preview.spec.ts` 断言 **`transport === 'worker'` 且 `fallback === null`** ——
+> 这是唯一能抓住该问题的观测点。
+
+**为什么当初需要 Worker**：`oracle` 单步 p50 ≈ 139ms、p95 ≈ 407ms、**max ≈ 1784ms**，
+换算成整回合（`MAX_AI_STEPS = 40`）最坏约 **71s**；主线程同步算会把界面冻住。
+（切片 2 验收时还出现过一次未复现的 `max 8436ms` 离群值。）搬进 Worker 后界面始终可交互，
+但注意**墙钟时间没有变短**：单回合几十秒在体验上仍需要"AI 思考中"之类的反馈，
+所以 `oracle` 目前仍不接入 UI。
 
 ## 6. 怎么验证改动
 

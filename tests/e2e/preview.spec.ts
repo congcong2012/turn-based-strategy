@@ -120,6 +120,28 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
     const state = await pveState(page)
     expect(state.players).toHaveLength(2)
 
+    // ★ 生产构建里 AI 也必须真的跑在 Worker 里：
+    // 这里特意把对局推进到行动阶段（部署阶段的 AI 是主线程同步做的，不经过 Worker），
+    // 否则"Worker 从没启动"也会看起来一切正常。
+    await page.getByTestId('deploy-done').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('行动', { timeout: 15_000 })
+    await expect(page.getByTestId('end-turn')).toBeEnabled()
+    await page.getByTestId('end-turn').click()
+    await expect
+      .poll(async () => page.getByTestId('current-player').innerText(), { timeout: 45_000 })
+      .toContain('（你）')
+
+    const ai = await page.evaluate(() => {
+      const hook = (
+        globalThis as unknown as {
+          __atPve?: { aiTransport: () => 'worker' | 'main'; aiFallback: () => string | null }
+        }
+      ).__atPve
+      return hook ? { transport: hook.aiTransport(), fallback: hook.aiFallback() } : null
+    })
+    expect(ai?.transport).toBe('worker')
+    expect(ai?.fallback).toBeNull()
+
     // 纯离线：全程只应加载同源资源，不该有任何外部请求（信令/字体/CDN）
     const external = requests.filter((url) => {
       if (url.startsWith('data:')) return false

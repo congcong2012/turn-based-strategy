@@ -17,7 +17,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPveSession } from '../app/pveSession'
-import type { PveConfig, PvePersistReason, PveSaveData, PveSession } from '../app/pveSession'
+import type { AiThinker, PveConfig, PvePersistReason, PveSaveData, PveSession } from '../app/pveSession'
+import { createAiWorkerClient } from '../ai/workerClient'
+import type { AiWorkerClient } from '../ai/workerClient'
 import { PVE_SAVE_VERSION, clearPve, loadPve, savePve } from '../app/pveStore'
 import { defaultStorage } from '../net/gameStore'
 import type { RoomActions } from './useRoom'
@@ -64,8 +66,51 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
     sessionRef.current = null
   }, [])
 
+  /**
+   * AI 计算的执行者：真实应用走 **Web Worker**（单人局的 AI 思考不占主线程），
+   * 会话本身仍保留"主线程同步计算"作为默认实现，因此既有单测与评估台不受影响。
+   *
+   * 懒创建：在线对战根本不会实例化它，也不会起线程。
+   */
+  const aiClientRef = useRef<AiWorkerClient | null>(null)
+  /** 退化到主线程的原因（正常情况下为 null；用于 DEV/E2E 断言与排查） */
+  const aiFallbackRef = useRef<string | null>(null)
+  const aiThink = useCallback<AiThinker>((task) => {
+    if (!aiClientRef.current) {
+      aiClientRef.current = createAiWorkerClient({
+        onFallback: (reason) => {
+          aiFallbackRef.current = reason
+        },
+      })
+    }
+    return aiClientRef.current.think(task)
+  }, [])
+
+  /**
+   * DEV/E2E：暴露"AI 到底跑在哪"。
+   *
+   * 为什么必须有这条断言：Worker 是**失败即静默回退**的（起不来的环境改用主线程算，
+   * 结果一样所以游戏照常能玩）。没有这个观测点，打包配置写错导致 Worker 从来没生效
+   * 也不会有任何症状 —— 只有这里能把它揪出来。
+   */
+  useEffect(() => {
+    const debugEnabled = import.meta.env.DEV || new URLSearchParams(window.location.search).has('debug')
+    if (!debugEnabled) return
+    ;(globalThis as Record<string, unknown>).__atPve = {
+      aiTransport: () => (aiClientRef.current?.usingWorker() ? 'worker' : 'main'),
+      aiFallback: () => aiFallbackRef.current,
+      aiWorkerStarted: () => aiClientRef.current !== null,
+    }
+  }, [])
+
   // 卸载时释放（含 StrictMode 的重复挂载）
-  useEffect(() => disposeSession, [disposeSession])
+  useEffect(() => {
+    return () => {
+      disposeSession()
+      aiClientRef.current?.dispose()
+      aiClientRef.current = null
+    }
+  }, [disposeSession])
 
   // ---------------------------------------------------------------- 落盘
 
@@ -136,6 +181,7 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
     }
     const session = createPveSession({
       restore: { config: snapshot.config, state: snapshot.state, journal: snapshot.journal },
+      aiThink,
       onChange: setView,
       onPersist: persist,
     })
@@ -143,20 +189,20 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
     setConfig(snapshot.config)
     setView(session.getView())
     setHasSave(false)
-  }, [resumeWhen, persist])
+  }, [resumeWhen, persist, aiThink])
 
   // ---------------------------------------------------------------- 生命周期
 
   const start = useCallback(
     (next: PveConfig) => {
       disposeSession()
-      const session = createPveSession({ config: next, onChange: setView, onPersist: persist })
+      const session = createPveSession({ config: next, aiThink, onChange: setView, onPersist: persist })
       sessionRef.current = session
       setConfig(next)
       setView(session.getView())
       setHasSave(false)
     },
-    [disposeSession, persist],
+    [disposeSession, persist, aiThink],
   )
 
   const restart = useCallback(() => {
