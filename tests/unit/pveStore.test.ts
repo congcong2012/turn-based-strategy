@@ -149,10 +149,15 @@ describe('pveStore · isPlausibleConfig', () => {
     expect(isPlausibleConfig({ opponents: 3, humanSeat: 3, difficulty: 'hard', seed: 0 })).toBe(true)
   })
 
-  it('拒绝尚未开放的档（master / expert / oracle）：它们只存在于内部策略表，不该从存档里进来', () => {
-    for (const difficulty of ['master', 'expert', 'oracle']) {
+  it('拒绝尚未开放的档（master / expert）：它们只存在于内部策略表，不该从存档里进来', () => {
+    for (const difficulty of ['master', 'expert']) {
       expect(isPlausibleConfig({ ...config, difficulty })).toBe(false)
     }
+  })
+
+  it('oracle 已开放（2026-10-04 达标）：存档校验必须放行，否则用极难开的局刷新后会被清档', () => {
+    expect(isPlausibleConfig({ ...config, difficulty: 'oracle' })).toBe(true)
+    expect(PLAYABLE_DIFFICULTIES).toContain('oracle')
   })
 
   it('mapId 可选：不写照常合法（老存档），写了必须真的存在', () => {

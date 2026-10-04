@@ -56,6 +56,10 @@ const DIFFICULTY_COPY: Record<PlayableDifficulty, { label: string; hint: string 
     label: '困难',
     hint: '看得更远；会经营军费、回防被抢的据点、给残血单位回补给，临近回合上限还会算分',
   },
+  oracle: {
+    label: '极难',
+    hint: '会把你的整个回合推演一遍再出手；平时几秒，后期大军团偶尔要等一两分钟',
+  },
 }
 
 const DIFFICULTY_OPTIONS = PLAYABLE_DIFFICULTIES.map((value) => ({
@@ -71,6 +75,17 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
   const [pickedMapId, setPickedMapId] = useState<string | null>(preferredMapId ?? null)
 
   const total = opponents + 1
+
+  /**
+   * 「极难」只在两人局成立。
+   *
+   * 它的机制是"我走完这回合 → **对手**走完这回合"再评估，这个前提在 3–4 人（多方博弈、非零和）
+   * 里不成立，内核会保守回退到与「困难」相同的一步前瞻。与其让玩家选一个"看起来更难、其实一样"
+   * 的档，不如直接禁用并说明原因；如果玩家先选了极难再把对手数调上去，这里会自动把选择落回「困难」。
+   */
+  const oracleUnavailable = total > 2
+  const effectiveDifficulty: PlayableDifficulty =
+    oracleUnavailable && difficulty === 'oracle' ? 'hard' : difficulty
   // 可选地图：内置 + 自制，且席位够用（例如 2 人图不会出现在 4 人局里）
   const candidates = useMemo(() => listPveMaps(total), [total])
   const autoMapId = defaultMapFor(total)
@@ -97,7 +112,7 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
     onStart({
       opponents,
       humanSeat: seat,
-      difficulty,
+      difficulty: effectiveDifficulty,
       mapId: effectiveMapId,
       // 种子决定"简单"难度抽到什么随机数；普通 / 困难是确定性策略。
       // 用时间戳保证每局不同，同时让同一局（含刷新恢复后）完全可复现。
@@ -194,19 +209,29 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
       <section className="panel">
         <h2>难度</h2>
         <div className="unit-picker" data-testid="pve-difficulty">
-          {DIFFICULTY_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              data-testid={'pve-difficulty-' + option.value}
-              className={difficulty === option.value ? 'picked' : ''}
-              onClick={() => setDifficulty(option.value)}
-            >
-              {option.label}
-              <span className="muted small"> {option.hint}</span>
-            </button>
-          ))}
+          {DIFFICULTY_OPTIONS.map((option) => {
+            const disabled = option.value === 'oracle' && oracleUnavailable
+            return (
+              <button
+                key={option.value}
+                type="button"
+                data-testid={'pve-difficulty-' + option.value}
+                className={effectiveDifficulty === option.value ? 'picked' : ''}
+                disabled={disabled}
+                onClick={() => setDifficulty(option.value)}
+              >
+                {option.label}
+                <span className="muted small"> {option.hint}</span>
+              </button>
+            )
+          })}
         </div>
+        {oracleUnavailable ? (
+          <p className="muted small" data-testid="pve-oracle-scope-hint">
+            「极难」暂时只在<b>两人局</b>可选：它的做法是"我走完这回合，再把你这一整个回合推演一遍"，
+            而 3 人以上是多方混战，这个前提不成立（会退回「困难」的强度，选它反而名不副实）。
+          </p>
+        ) : null}
         <p className="muted small" data-testid="pve-difficulty-fairness">
           难度只改变 AI 的<b>决策水平</b>：AI 与你用<b>完全相同的规则</b>，
           军费、据点收入、单位上限、行动点一项都不多给 —— 不会靠加资源来"变强"。

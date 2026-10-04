@@ -94,11 +94,53 @@ test.describe('单人练习（PVE）', () => {
     await expect(page.getByTestId('pve-difficulty-hard')).toContainText('回防被抢的据点')
     await expect(page.getByTestId('pve-difficulty-fairness')).toContainText('完全相同的规则')
 
+    // 「极难」的机制前提是"只有一个对手"，所以两人局可选、多人局禁用并说明原因
+    await expect(page.getByTestId('pve-difficulty-oracle')).toContainText('极难')
+    await expect(page.getByTestId('pve-difficulty-oracle')).toBeDisabled()
+    await expect(page.getByTestId('pve-oracle-scope-hint')).toBeVisible()
+
+    await page.getByTestId('pve-opponents-1').click()
+    await expect(page.getByTestId('pve-difficulty-oracle')).toBeEnabled()
+    await expect(page.getByTestId('pve-oracle-scope-hint')).toHaveCount(0)
+    await page.getByTestId('pve-difficulty-oracle').click()
+    await expect(page.getByTestId('pve-difficulty-oracle')).toHaveClass(/picked/)
+
+    // 再把对手数调回多人：已选的极难要自动落回「困难」，不能留一个"选着但已被禁用"的档
+    await page.getByTestId('pve-opponents-3').click()
+    await expect(page.getByTestId('pve-difficulty-hard')).toHaveClass(/picked/)
+    await expect(page.getByTestId('pve-difficulty-oracle')).toBeDisabled()
+    await page.getByTestId('pve-difficulty-normal').click()
+
     // 返回主页
     await page.getByTestId('back-home').click()
     await expect(page.getByTestId('entry-online')).toBeVisible()
 
     expect(errors).toEqual([])
+  })
+
+  test('选「极难」能正常开局，且难度真的落进了会话（读存档里的配置）', async ({ page }) => {
+    await openPveSetup(page)
+    await expect(page.getByTestId('pve-difficulty-oracle')).toBeEnabled()
+    await page.getByTestId('pve-difficulty-oracle').click()
+    await page.getByTestId('pve-start').click()
+
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+    // AI 自动完成部署：说明 oracle 档的策略确实被会话用上了
+    await expect
+      .poll(async () => (await gameState(page)).units?.length ?? 0, { timeout: 15_000 })
+      .toBeGreaterThan(0)
+
+    // 存档里存的就是这一档 —— 顺便证明"用极难开的局刷新后不会被判非法而清档"
+    const persisted = await page.evaluate(() => {
+      const raw = window.localStorage.getItem('ancient-tactics.pve')
+      return raw ? (JSON.parse(raw) as { config?: { difficulty?: string } }).config?.difficulty : null
+    })
+    expect(persisted).toBe('oracle')
+
+    // 刷新后接着打（存档校验放行了这一档）
+    await page.reload()
+    await expect(page.getByTestId('pve-setup')).toHaveCount(0)
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
   })
 
   test('开局 → 部署 → AI 自动部署 → 进入行动阶段', async ({ page }) => {

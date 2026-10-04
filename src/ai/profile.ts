@@ -27,13 +27,22 @@ export type Difficulty = 'easy' | 'normal' | 'hard' | 'master' | 'expert' | 'ora
  * **对玩家开放**（设置页能选到）的难度档 —— 运行时单一事实源。
  *
  * 规则：只有**实测达到强度门槛**、且行为差异能被玩家感知的档才允许写进这里。
- * `master` / `expert` / `oracle` 都还留在 `PROFILES` 里但**刻意不暴露**
- * （实测未达门槛，见 `docs/ai-difficulty.md`）。
+ *
+ * `oracle`（界面叫「极难」）于 2026-10-04 达标开放：
+ * 真实地图 60 局 **66.7% 胜 `hard`**（CI 54.1%–77.3%），**换主种子复核同为 66.7%**，
+ * 底线对 `random` **100%（60/60）** —— 见 `docs/ai-bench-rollout.md` §6。
+ * 它唯一的短板是**尾部延迟**（单步 max 1.8–3.9s ⇒ 最坏回合 70–155s）。这一条经过产品权衡后接受：
+ * AI 已跑在 Web Worker 里（界面不卡），并有「电脑正在思考…」提示，玩家不会以为死机。
+ *
+ * `master` / `expert` 仍未达标，留在 `PROFILES` 里但**刻意不暴露**。
+ *
+ * ⚠️ `oracle` 的完整推演只在**两人局**成立（多人是多方博弈，"对手 = 另一个人"的前提不成立），
+ * 3 人及以上会退回 `hard` 的行为 —— 所以设置页在多人局里会禁用它，别把这层判断漏掉。
  *
  * 设置页的选项顺序、以及存档里"哪些难度算合法"都由它派生 ——
- * 将来某个档达标要上线时，**只改这一处**即可，UI 与存档校验会一起跟上。
+ * 将来某个档达标要上线时，**只改这一处**即可，UI（缺文案会编译报错）与存档校验会一起跟上。
  */
-export const PLAYABLE_DIFFICULTIES = ['easy', 'normal', 'hard'] as const
+export const PLAYABLE_DIFFICULTIES = ['easy', 'normal', 'hard', 'oracle'] as const
 
 export type PlayableDifficulty = (typeof PLAYABLE_DIFFICULTIES)[number]
 
