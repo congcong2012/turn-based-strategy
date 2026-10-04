@@ -5,7 +5,7 @@
 
 发版流程见 docs/release-checklist.md（每次发版照做，不许跳步）。
 
-## [未发布]
+## [1.4.0] · 2026-10-04
 
 ### 新增
 
@@ -45,22 +45,39 @@
   指定的地图若席位不够（例如 2 人图开 4 人局）会自动回退到内置图，避免后两名玩家没有部署区。
 - 存档校验：指定的地图必须真的存在，否则整档判非法并清掉 —— 而不是等到开局时抛「未知地图」。
 
-### 验收记录（未发布）
+### 验收记录（v1.4.0）
 
 | 项 | 结果 |
 | --- | --- |
 | 静态检查 `tsc --noEmit` ×2 | ✅ 通过 |
-| 单元测试 | ✅ **358 passed**（34 个文件；新增 mapValidation 19 / mapStore 20 / mapTemplates 8 / pveMapChoice 9 / aiWorker 8 / pveSession 异步路径 4） |
-| E2E `local` | ✅ **38 passed**（新增 `editor.spec.ts` 2 条；`pve.spec.ts` 增加"AI 确实跑在 Worker 里"的断言） |
-| E2E `preview`（dist + 相对 base） | ✅ **4 passed**（其中"离线开一局单人练习"已推进到 AI 行动，并断言 Worker 生效、全程零外部请求） |
-| 子路径实测（`serve-subpath.mjs` → 4180） | ✅ 驱动到 AI 行动：`aiTransport = worker`、回退原因为 null、零失败请求 |
-| 生产构建 | 见发版时按 `docs/release-checklist.md` 全量执行 |
+| 单元测试 | ✅ **359 passed**（34 个文件；本版新增 mapValidation 19 / mapStore 20 / mapTemplates 8 / pveMapChoice 9 / aiWorker 8 / pveSession 异步路径 4） |
+| 生产构建 | ✅ 0 error（`dist/index.html` 资源为相对路径 `./assets/...`） |
+| E2E `local` | ✅ **39 passed**（新增 `editor.spec.ts` 2 条 + 「极难」开局 1 条） |
+| E2E `mobile` | ✅ **2 passed** |
+| E2E `preview`（dist + 相对 base） | ✅ **4 passed**（含：主页新入口、四档难度、Worker 生效、全程零外部请求） |
+| E2E `p2p`（真实 WebRTC + 公共信令） | ✅ **1 passed** |
+| E2E `manual`（无信令，裸 WebRTC 打洞） | ⚠️ **首跑失败，单跑复核 2 次均通过** → 判定为该轨道已知的负载敏感抖动（见下） |
+| 子路径复现（`serve-subpath.mjs` → 4180） | ✅ `verify-live` **25/25 通过**；另在产物上冒烟地图编辑器：校验/画笔/保存/试玩预选全通过、零页面异常、零失败请求 |
+| 线上自检（真实公网） | 见下方「线上自检结果」 |
+
+关于 `manual` 轨道的那次失败（如实记录）：
+
+- 现象：`manual-pair.spec.ts` 在**双方已互见、连接徽章已 connected** 之后，第 60 行等房主的「开始对局」按钮
+  超时（元素不存在）—— 即"准备"状态没同步到房主。
+- 处理：按 `docs/release-checklist.md` 的规定"偶发失败先单跑确认"，单跑 **2 次均通过**（2.7s / 2.4s），
+  且全量回归里同一条轨道随后也通过。
+- 判定：**非本版引入的回归**（本版没有改动 `src/net/**` 与传输层），属该轨道已知的负载敏感抖动。
+  它依赖裸 `RTCPeerConnection` 打洞，清单里本就标注"受网络与机器负载影响"。
+  **遗留观察项**：若以后再出现，优先怀疑"手动直连下 ready 同步存在竞态"，届时单独排查。
 
 `editor.spec.ts` 的两条用例：
 
 1. 模板开箱即合法（校验通过、保存与试玩按钮可用）→ 画笔刷后悬停读数从「平原」变「森林」→ 保存后出现在「我的地图」。
 2. 编辑器点「用这张图开始单人练习」→ 自动保存并跳到设置页且**预选这张自制图** → 开局（`state.mapId` 是 `user_*`）
    → **刷新后仍能恢复到部署阶段**（这条专门守"启动装载早于读存档"的顺序，否则存档会因为查不到地图被清掉）。
+
+> 真人跨网络验收（清单 §6）需两台不同网络的设备，本地无法代跑，仍由人工执行。
+
 
 ## [1.3.0] · 2026-10-04
 

@@ -48,10 +48,11 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
 
     await page.goto('/')
     await expect(page.getByRole('heading', { name: /古代战棋/ })).toBeVisible()
-    // 生产构建默认落在主页：三个入口 + 页脚版本号
+    // 生产构建默认落在主页：三个入口 + 地图编辑器 + 页脚版本号
     await expect(page.getByTestId('entry-online')).toBeVisible()
     await expect(page.getByTestId('entry-pve')).toBeVisible()
     await expect(page.getByTestId('entry-rules')).toBeVisible()
+    await expect(page.getByTestId('entry-editor')).toBeVisible()
     await expect(page.getByTestId('version-line')).toContainText('v')
     await page.getByTestId('entry-online').click()
     await expect(page.getByTestId('join-panel')).toBeVisible()
@@ -93,6 +94,10 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
     await page.goto('/?debug=1')
     await page.getByTestId('entry-pve').click()
     await expect(page.getByTestId('pve-setup')).toBeVisible()
+    // 四档难度都在（含 2026-10-04 开放的「极难」）
+    for (const tier of ['easy', 'normal', 'hard', 'oracle']) {
+      await expect(page.getByTestId('pve-difficulty-' + tier)).toBeVisible()
+    }
     await page.getByTestId('pve-start').click()
 
     await expect(page.getByTestId('phase-label')).toHaveText('部署')
