@@ -103,8 +103,9 @@ mulberry32(hashSeed(seed, state.rev, state.turnSeq, state.turnIndex, playerId, d
 现状：`nextCommand` 在**主线程同步执行**，但 `pveSession` 用 `schedule()` 把每一步拆成单独的 tick，
 所以每一步之间界面是活的。`easy` / `normal` / `hard` 单步都在毫秒级，玩家无感。
 
-`oracle` 单步 p50 ≈ 151ms、p95 ≈ 302ms、max ≈ 577ms —— 40 步的回合累计会有可见卡顿，
-且切片 2 验收时还出现过一次**未复现的 `max 8436ms` 离群值**。
+`oracle` 单步 p50 ≈ 139ms、p95 ≈ 407ms、**max ≈ 1784ms**（加厚对手模型后的配置）
+—— 换算成整回合（`MAX_AI_STEPS = 40`）最坏约 **71s**，远超"整回合 ≤30s"的约定；
+切片 2 验收时还出现过一次**未复现的 `max 8436ms` 离群值**。
 
 > **因此：任何比 `hard` 重的档，上线前必须先搬进 Web Worker。**（AI-6 待办，尚未实施。）
 > 迁移要点：`nextCommand` 已经是纯函数，Worker 只需 `postMessage({state, playerId, difficulty, seed})`

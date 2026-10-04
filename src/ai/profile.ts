@@ -183,13 +183,19 @@ const ROLLOUT_OFF = {
 
 /**
  * 回合级 rollout 的参数（`oracle` 档使用）。
- * 由 `docs/ai-bench-rollout.md` 的实测校准：根候选 6 条、我走完 6 步、对手走完 8 步。
+ *
+ * v1（切片 4 验收）：根候选 6、我走完 6 步、对手走完 8 步、对手每步前瞻 8 → 63.3% 胜 hard。
+ * v2（冲 65% 门槛，**测量中**）：只加厚对手模型（对手 8 → 12 步、每步前瞻 8 → 12），
+ * 根候选仍是 6（宽度是最贵的一维：每多一个根候选就整条 rollout 重跑一遍）。
+ * 依据是切片 4 的核心教训 ——「低估对手会让 AI 过于自信」。
+ * 枚举次数上界 ≈ beamWidth × (1 + mySteps + foeSteps) = 6 × 19 = 114，预算取 170 留余量。
+ * 结果与取舍见 `docs/ai-bench-rollout.md`。
  */
 const ROLLOUT_ON = {
   rolloutMySteps: 6,
-  rolloutFoeSteps: 8,
-  rolloutFoeLookahead: 8,
-  rolloutBudget: 140,
+  rolloutFoeSteps: 12,
+  rolloutFoeLookahead: 12,
+  rolloutBudget: 170,
 } as const
 
 /**
