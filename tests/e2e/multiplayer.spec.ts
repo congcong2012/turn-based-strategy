@@ -195,4 +195,48 @@ test.describe('AI 补位与观战（本地传输）', () => {
     // 参战席位不受影响：仍然是 2 名玩家
     expect((await stateOf(alice)).players).toEqual(['sp-a', 'sp-b'])
   })
+
+  test('★ 观战者的结算文案是中性的「对局结束」，而不是「败北」', async ({ context }) => {
+    const alice = await context.newPage()
+    const bob = await context.newPage()
+    await alice.goto(localUrl('sp2-a', '甲将军'))
+    await joinRoom(alice, ROOM, '甲将军')
+    await waitForHost(alice)
+    await bob.goto(localUrl('sp2-b', '乙将军'))
+    await joinRoom(bob, ROOM, '乙将军')
+    await expect(alice.getByTestId('player-item')).toHaveCount(2)
+
+    await alice.getByTestId('ready-button').click()
+    await bob.getByTestId('ready-button').click()
+    await expect(alice.getByTestId('start-button')).toBeEnabled()
+    await alice.getByTestId('start-button').click()
+    await expect(alice.getByTestId('phase-label')).toHaveText('部署')
+
+    const watcher = await context.newPage()
+    await watcher.goto(localUrl('sp2-c', '看客'))
+    await watcher.getByTestId('nickname-input').fill('看客')
+    await watcher.getByTestId('room-code-input').fill(ROOM)
+    await watcher.getByTestId('spectate-button').click()
+    await expect(watcher.getByTestId('spectator-badge')).toBeVisible({ timeout: 20_000 })
+
+    // 双方各部署一个兵并确认 → 进入行动阶段（认输按钮只在行动阶段渲染）
+    await alice.getByTestId('deploy-sword').click()
+    await clickTile(alice, 11, 4)
+    await bob.getByTestId('deploy-sword').click()
+    await clickTile(bob, 11, 19)
+    await alice.getByTestId('deploy-done').click()
+    await bob.getByTestId('deploy-done').click()
+    await expect(alice.getByTestId('phase-label')).toHaveText('行动')
+
+    // 甲将军认输 → 终局。观战者不属于任何一方，不能按"我方是否获胜"判胜负
+    await alice.getByTestId('resign-button').click()
+    await expect(watcher.getByTestId('game-over')).toBeVisible({ timeout: 20_000 })
+    await expect(watcher.getByTestId('game-over-title')).toHaveText('对局结束')
+    // 观战者也能看战绩，且没有任何一行被标成"我方"
+    await expect(watcher.getByTestId('battle-tally')).toBeVisible()
+    await expect(watcher.locator('.tally-table tr.tally-self')).toHaveCount(0)
+
+    // 对照：参战者自己看到的是胜负文案
+    await expect(alice.getByTestId('game-over-title')).toHaveText('败北')
+  })
 })

@@ -260,6 +260,52 @@ test.describe('单人练习（PVE）', () => {
     await expect(page.getByTestId('entry-online')).toBeVisible()
   })
 
+  test('结算显示战绩（得分/据点/部队/损失），并能复制战报文本', async ({ page }) => {
+    // 拦下剪贴板写入，检查复制的战报内容（与房间密码用例同一手法）
+    await page.addInitScript(() => {
+      const w = window as unknown as { __copied: string }
+      w.__copied = ''
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: (text: string) => {
+            w.__copied = text
+            return Promise.resolve()
+          },
+        },
+      })
+    })
+
+    await openPveSetup(page)
+    await page.getByTestId('pve-difficulty-easy').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+
+    await page.getByTestId('deploy-sword').click()
+    await clickTile(page, 2, 0)
+    await page.getByTestId('deploy-done').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('行动', { timeout: 15_000 })
+
+    await page.getByTestId('resign-button').click()
+    await expect(page.getByTestId('game-over')).toBeVisible()
+
+    // 战绩面板：两方各一行，且只有"我方"那一行被高亮
+    await expect(page.getByTestId('battle-tally')).toBeVisible()
+    await expect(page.locator('.tally-table tbody tr')).toHaveCount(2)
+    await expect(page.locator('.tally-table tr.tally-self')).toHaveCount(1)
+    await expect(page.getByTestId('battle-totals')).toContainText('回合')
+    await expect(page.getByTestId('battle-totals')).toContainText('损失')
+
+    // 复制战报：按钮给"已复制"反馈，剪贴板里是完整文本
+    await page.getByTestId('copy-report').click()
+    await expect(page.getByTestId('copy-report')).toHaveText('已复制')
+    const copied = await page.evaluate(() => (window as unknown as { __copied: string }).__copied)
+    expect(copied).toContain('【古代战棋】对局战报')
+    // 单人模式下己方的显示名就是「你」（与界面战报口径一致），并带上"我方"标记
+    expect(copied).toContain('你（我方）')
+    expect(copied).toContain('本局投入 ')
+  })
+
   test('三局二胜不必：3 个 AI 也能正常开局（四人图）', async ({ page }) => {
     await openPveSetup(page)
     await page.getByTestId('pve-opponents-3').click()

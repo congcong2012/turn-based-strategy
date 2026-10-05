@@ -3,6 +3,7 @@ import { DATA, getMap, unitType } from '../game/data'
 import { attackableTargets, reachableDestinations } from '../game/movement'
 import { buildingAt, unitAt } from '../game/board'
 import { scoreOf } from '../game/state'
+import { reportTextFromState, resultText, summarizeBattle } from '../game/battleReport'
 import type { RoomView } from '../net/roomSession'
 import type { RoomActions } from '../hooks/useRoom'
 import type { GameState, PlayerId } from '../game/types'
@@ -191,6 +192,26 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
   // 单人模式不存在"房主掉线"，永不冻结。
   // 观战者也算冻结：它的所有操作按钮都该是禁用的（只读模式下不能放兵/结束回合）。
   const frozen = mode === 'online' && (view.pausedReason === 'host-offline' || view.spectating)
+
+  // 结算战绩：只在终局计算。
+  // 数据全部来自终局状态（不依赖事件累积）⇒ 联机中途刷新后依然完整（见 game/battleReport 的说明）。
+  const nameOfPlayer = useCallback((playerId: PlayerId) => nameOf(view, playerId), [view])
+  const battleSummary = useMemo(
+    () => (isOver ? summarizeBattle(game, nameOfPlayer) : null),
+    [isOver, game, nameOfPlayer],
+  )
+  const reportText = useMemo(
+    () =>
+      isOver
+        ? reportTextFromState(game, nameOfPlayer, {
+            log: view.log,
+            // 观战者没有"我方"，不带这个标记，免得战报读起来像在替某一方站台
+            selfId: view.spectating ? null : view.selfId,
+          })
+        : '',
+    [isOver, game, nameOfPlayer, view.log, view.spectating, view.selfId],
+  )
+  const [reportCopied, setReportCopied] = useState(false)
 
   // 进入部署阶段：自动把镜头对准己方部署区（避免"看不到自己的区域、点了却被告知不在部署区"）
   useEffect(() => {
@@ -661,17 +682,74 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
         </aside>
       </div>
 
-      {isOver ? (
+      {isOver && battleSummary ? (
         <div className="overlay" data-testid="game-over">
-          <div className="overlay-card">
-            <h2>
-              {game.winner === null ? '和局' : game.winner === view.selfId ? '胜利！' : '败北'}
+          <div className="overlay-card game-over-card">
+            <h2 data-testid="game-over-title">
+              {/* 观战者不属于任何一方，不能按"我方是否获胜"判胜负（以前这里会对观战者显示"败北"） */}
+              {view.spectating
+                ? '对局结束'
+                : game.winner === null
+                  ? '和局'
+                  : game.winner === view.selfId
+                    ? '胜利！'
+                    : '败北'}
             </h2>
-            <p className="muted">
-              结果：
-              {game.winner === null ? '双方同分' : nameOf(view, game.winner) + ' 获胜'}
-              （{game.winReason === 'hq_captured' ? '攻陷王城' : game.winReason === 'annihilation' ? '全歼敌军' : game.winReason === 'score' ? '回合上限计分' : '对手投降'}）
+            <p className="muted" data-testid="game-over-result">
+              结果：{resultText(battleSummary, nameOfPlayer)}
             </p>
+
+            <table className="tally-table" data-testid="battle-tally">
+              <thead>
+                <tr>
+                  <th>玩家</th>
+                  <th>得分</th>
+                  <th>据点</th>
+                  <th>部队</th>
+                  <th>军费</th>
+                </tr>
+              </thead>
+              <tbody>
+                {battleSummary.players.map((tally) => (
+                  <tr
+                    key={tally.playerId}
+                    data-testid={'tally-' + tally.playerId}
+                    className={tally.playerId === view.selfId ? 'tally-self' : undefined}
+                  >
+                    <th scope="row" style={{ color: playerColor(game, tally.playerId) }} title={tally.name}>
+                      {tally.name}
+                      {tally.eliminated ? <span className="tag tag-waiting"> 已淘汰</span> : null}
+                    </th>
+                    <td data-testid={'tally-score-' + tally.playerId}>{tally.score.total}</td>
+                    <td data-testid={'tally-buildings-' + tally.playerId}>{tally.buildingCount}</td>
+                    <td data-testid={'tally-units-' + tally.playerId}>{tally.unitCount}</td>
+                    <td>{tally.funds}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="muted small" data-testid="battle-totals">
+              共 {battleSummary.rounds} 回合 · 投入 {battleSummary.totals.raised} 个部队 · 损失{' '}
+              {battleSummary.totals.lost}
+            </p>
+
+            <button
+              type="button"
+              className="block"
+              data-testid="copy-report"
+              onClick={() => {
+                void navigator.clipboard?.writeText(reportText).then(
+                  () => {
+                    setReportCopied(true)
+                    setTimeout(() => setReportCopied(false), 1500)
+                  },
+                  () => setReportCopied(false),
+                )
+              }}
+            >
+              {reportCopied ? '已复制' : '复制战报'}
+            </button>
+
             {mode === 'pve' ? (
               <>
                 <button type="button" className="primary block" data-testid="pve-again" onClick={() => onRestart?.()}>
@@ -682,7 +760,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
                 </button>
               </>
             ) : (
-              <button type="button" className="primary" data-testid="back-to-lobby" onClick={() => actions.leave()}>
+              <button type="button" className="primary block" data-testid="back-to-lobby" onClick={() => actions.leave()}>
                 返回大厅
               </button>
             )}

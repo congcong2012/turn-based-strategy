@@ -179,6 +179,27 @@ button.block { width: 100%; margin-bottom: 8px; }
   padding: 24px 28px; text-align: center; min-width: 260px;
 }
 .overlay-card h2 { margin: 0 0 8px; }
+/* 结算战绩：用独立类名，避免影响共用的 .overlay-card（捐赠弹层受手机宽度用例守护） */
+.game-over-card { width: 100%; max-width: min(560px, 100%); }
+.tally-table {
+  width: 100%; border-collapse: collapse; table-layout: fixed;
+  margin: 12px 0 6px; font-size: 13px;
+}
+.tally-table thead th { width: auto; font-size: 12px; font-weight: 500; color: var(--muted); }
+.tally-table thead th:first-child { width: 34%; }
+.tally-table th, .tally-table td {
+  padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: right;
+}
+.tally-table tbody th {
+  text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tally-table tr.tally-self { background: rgba(217, 164, 65, 0.1); }
+.game-over-card .block { margin-bottom: 8px; }
+@media (max-width: 480px) {
+  .game-over-card { padding: 20px 16px; }
+  .tally-table { font-size: 12px; }
+  .tally-table th, .tally-table td { padding: 4px 3px; }
+}
 @media (max-width: 760px) {
   .game-body { flex-direction: column; }
   .game-panel { width: auto; flex: 0 0 auto; border-left: none; border-top: 1px solid var(--line); }

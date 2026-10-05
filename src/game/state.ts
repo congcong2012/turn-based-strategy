@@ -142,16 +142,38 @@ export function startTurn(state: GameState, data: GameData = DATA): { state: Gam
   return { state: s, events }
 }
 
-export function scoreOf(state: GameState, playerId: PlayerId, data: GameData = DATA): number {
-  let total = 0
+/** 单个据点的分值：王城 5 / 兵营 3 / 村落 1（计分规则的单一事实源） */
+export function buildingScore(type: string): number {
+  return type === 'hq' ? 5 : type === 'barracks' ? 3 : 1
+}
+
+/** 计分拆解：结算战绩要分项展示，但分值口径必须与 scoreOf 完全一致，故共用此实现 */
+export interface ScoreBreakdown {
+  /** 据点分（王城5/兵营3/村落1） */
+  buildings: number
+  /** 兵力分（存活部队造价 / 1000，向下取整） */
+  units: number
+  /** 资金分（军费 / 1000，向下取整） */
+  funds: number
+  total: number
+}
+
+export function scoreBreakdown(state: GameState, playerId: PlayerId, data: GameData = DATA): ScoreBreakdown {
+  let buildings = 0
   for (const b of state.buildings) {
     if (b.owner !== playerId) continue
-    total += b.type === 'hq' ? 5 : b.type === 'barracks' ? 3 : 1
+    buildings += buildingScore(b.type)
   }
   const unitCost = state.units
     .filter((u) => u.owner === playerId)
     .reduce((sum, u) => sum + unitType(u.type, data).cost, 0)
-  return total + Math.floor(unitCost / 1000) + Math.floor((state.funds[playerId] ?? 0) / 1000)
+  const units = Math.floor(unitCost / 1000)
+  const funds = Math.floor((state.funds[playerId] ?? 0) / 1000)
+  return { buildings, units, funds, total: buildings + units + funds }
+}
+
+export function scoreOf(state: GameState, playerId: PlayerId, data: GameData = DATA): number {
+  return scoreBreakdown(state, playerId, data).total
 }
 
 export function survivors(state: GameState): PlayerId[] {
