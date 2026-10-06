@@ -94,10 +94,16 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
     await page.goto('/?debug=1')
     await page.getByTestId('entry-pve').click()
     await expect(page.getByTestId('pve-setup')).toBeVisible()
-    // 四档难度都在（含 2026-10-04 开放的「极难」）
-    for (const tier of ['easy', 'normal', 'hard', 'oracle']) {
+    // 难度三档都在；「困难」下再展开两种算法模式（原「极难」并入这里）
+    for (const tier of ['easy', 'normal', 'hard']) {
       await expect(page.getByTestId('pve-difficulty-' + tier)).toBeVisible()
     }
+    await page.getByTestId('pve-difficulty-hard').click()
+    for (const mode of ['lookahead', 'rollout']) {
+      await expect(page.getByTestId('pve-hard-mode-' + mode)).toBeVisible()
+    }
+    // 换回普通档再开局（与改动前的默认行为保持一致）
+    await page.getByTestId('pve-difficulty-normal').click()
     await page.getByTestId('pve-start').click()
 
     await expect(page.getByTestId('phase-label')).toHaveText('部署')

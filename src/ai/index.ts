@@ -11,7 +11,9 @@
  *     hard（单步前瞻 + 评估器 v2）/ master（切片 3：+ 评估器 v3）/
  *     expert（切片 2：beam 极小极大 + α-β，见 `./search`）/
  *     **oracle（切片 4：回合级 rollout，见 `./rollout`）**；
- *     其中 master / expert / oracle 均**暂不接入 UI**（设置页仍只有前三档）。
+ *     其中 master / expert **暂不接入 UI**（不写进 `PLAYABLE_DIFFICULTIES`）；
+ *     而 `hard` 与 `oracle` 在设置页是**同一个难度档「困难」的两种算法模式**
+ *     （「快棋」/「深推演」，映射见 `src/ui/PveSetup.tsx`）。
  *  4. **永不 resign**；
  *  5. 随机取自传入的 rng（或按状态散列出的确定性 rng），内核保持零随机、同种子可复现；
  *     普通 / 困难 / 专家唯一的 rng 消费是 TIE_EPSILON 平局打破 —— 让不同种子走出不同的棋，

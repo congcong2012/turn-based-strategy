@@ -122,7 +122,9 @@ test.describe('手机布局（393px 竖屏）', () => {
     await page.getByRole('button', { name: '返回主页' }).click()
     await page.getByTestId('entry-pve').click()
     await expect(page.getByTestId('pve-setup')).toBeVisible()
-    await expect(page.getByTestId('pve-difficulty-oracle')).toBeVisible()
+    // 选中「困难」把两种算法模式的文案也展开进来 —— 这里是最长的一段，最该守住不溢出
+    await page.getByTestId('pve-difficulty-hard').click()
+    await expect(page.getByTestId('pve-hard-modes')).toBeVisible()
     await expectNoHorizontalOverflow(page)
     await page.getByTestId('back-home').click()
 

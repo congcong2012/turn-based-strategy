@@ -380,3 +380,8 @@ button.block { width: 100%; margin-bottom: 8px; }
    在手机上表现为整页横向溢出（393px 屏幕下页面宽近 1000px）。 */
 .pve-setup .unit-picker button { white-space: normal; }
 .pve-setup .unit-picker button > span { display: block; margin-top: 2px; }
+
+/* 「困难」的两种算法模式：挂在难度卡下面，左边留一条竖线表示"它属于上一档" */
+.pve-setup .hard-mode { margin: -4px 0 10px; padding-left: 10px; border-left: 2px solid var(--line); }
+.pve-setup .hard-mode .unit-picker { margin-bottom: 6px; }
+.pve-setup .hard-mode p { margin: 0 0 6px; }

@@ -29,7 +29,7 @@
 | `src/app/pveSession.ts` | 本地会话：自己持有 `GameState`，人类与 AI 的指令都走同一个 `applyCommand`；对外产出与联机同形状的 `RoomView` |
 | `src/app/pveStore.ts` | 对局存档（localStorage 单槽 `ancient-tactics.pve`）；难度合法性取自 `PLAYABLE_DIFFICULTIES` |
 | `src/hooks/usePveGame.ts` | 把会话接进 React，并在终局时清档 |
-| `src/ui/PveSetup.tsx` | 设置页：对手数 / 阵营 / 难度；难度文案按 `Record<PlayableDifficulty, …>` 穷尽，**加档会编译报错** |
+| `src/ui/PveSetup.tsx` | 设置页：对手数 / 阵营 / 难度。**难度分两层**：三档难度（简单/普通/困难），其中「困难」再挂两种算法模式（快棋 = `hard`、深推演 = `oracle`）。归档表 `PLACEMENT` 按 `Record<PlayableDifficulty, …>` 穷尽，**加档会编译报错** |
 | `scripts/ai-bench.ts` | 对战评估台（`npm run bench:ai`） |
 
 ## 2. 决策流水线

@@ -79,14 +79,13 @@ test.describe('单人练习（PVE）', () => {
     await expect(page.getByTestId('pve-map-hint')).toContainText('4 方')
     await expect(page.getByTestId('pve-neutral-hint')).toHaveCount(0)
 
-    // 难度可选（三档：简单 / 普通 / 困难）
+    // 难度三档（简单 / 普通 / 困难）——「极难」不再是并列档位，而是「困难」下的一个算法模式
     await expect(page.getByTestId('pve-difficulty-easy')).toBeVisible()
     await expect(page.getByTestId('pve-difficulty-normal')).toBeVisible()
     await expect(page.getByTestId('pve-difficulty-hard')).toContainText('困难')
-    await page.getByTestId('pve-difficulty-easy').click()
-    await page.getByTestId('pve-difficulty-hard').click()
-    await expect(page.getByTestId('pve-difficulty-hard')).toHaveClass(/picked/)
-    await page.getByTestId('pve-difficulty-normal').click()
+    await expect(page.getByTestId('pve-difficulty-oracle')).toHaveCount(0)
+    // 没选「困难」时不该展开算法模式
+    await expect(page.getByTestId('pve-hard-modes')).toHaveCount(0)
 
     // 三档必须写明**行为差异**（不能只是"更聪明"这类空话），并明示公平性
     await expect(page.getByTestId('pve-difficulty-easy')).toContainText('偶尔干脆不动')
@@ -94,22 +93,36 @@ test.describe('单人练习（PVE）', () => {
     await expect(page.getByTestId('pve-difficulty-hard')).toContainText('回防被抢的据点')
     await expect(page.getByTestId('pve-difficulty-fairness')).toContainText('完全相同的规则')
 
-    // 「极难」的机制前提是"只有一个对手"，所以两人局可选、多人局禁用并说明原因
-    await expect(page.getByTestId('pve-difficulty-oracle')).toContainText('极难')
-    await expect(page.getByTestId('pve-difficulty-oracle')).toBeDisabled()
-    await expect(page.getByTestId('pve-oracle-scope-hint')).toBeVisible()
+    // 选「困难」→ 展开两种算法模式，并且**明确标注算法本身**与深推演的实测强度
+    await page.getByTestId('pve-difficulty-easy').click()
+    await page.getByTestId('pve-difficulty-hard').click()
+    await expect(page.getByTestId('pve-difficulty-hard')).toHaveClass(/picked/)
+    await expect(page.getByTestId('pve-hard-modes')).toBeVisible()
+    await expect(page.getByTestId('pve-hard-mode-lookahead')).toContainText('快棋')
+    await expect(page.getByTestId('pve-hard-mode-lookahead')).toContainText('一步前瞻')
+    await expect(page.getByTestId('pve-hard-mode-rollout')).toContainText('深推演')
+    await expect(page.getByTestId('pve-hard-mode-rollout')).toContainText('回合推演')
+    await expect(page.getByTestId('pve-hard-mode-strength')).toContainText('65%')
+
+    // 「深推演」的前提是"只有一个对手"，所以两人局可选、多人局禁用并说明原因
+    // （此刻是 4 人局）
+    await expect(page.getByTestId('pve-hard-mode-rollout')).toBeDisabled()
+    await expect(page.getByTestId('pve-hard-mode-scope-hint')).toBeVisible()
 
     await page.getByTestId('pve-opponents-1').click()
-    await expect(page.getByTestId('pve-difficulty-oracle')).toBeEnabled()
-    await expect(page.getByTestId('pve-oracle-scope-hint')).toHaveCount(0)
-    await page.getByTestId('pve-difficulty-oracle').click()
-    await expect(page.getByTestId('pve-difficulty-oracle')).toHaveClass(/picked/)
+    await expect(page.getByTestId('pve-hard-mode-rollout')).toBeEnabled()
+    await expect(page.getByTestId('pve-hard-mode-scope-hint')).toHaveCount(0)
+    await page.getByTestId('pve-hard-mode-rollout').click()
+    await expect(page.getByTestId('pve-hard-mode-rollout')).toHaveClass(/picked/)
 
-    // 再把对手数调回多人：已选的极难要自动落回「困难」，不能留一个"选着但已被禁用"的档
+    // 再把对手数调回多人：已选的深推演要自动落回「快棋」，不能留一个"选着但已被禁用"的模式
     await page.getByTestId('pve-opponents-3').click()
-    await expect(page.getByTestId('pve-difficulty-hard')).toHaveClass(/picked/)
-    await expect(page.getByTestId('pve-difficulty-oracle')).toBeDisabled()
+    await expect(page.getByTestId('pve-hard-mode-lookahead')).toHaveClass(/picked/)
+    await expect(page.getByTestId('pve-hard-mode-rollout')).toBeDisabled()
+
+    // 换回「普通」：模式组收起
     await page.getByTestId('pve-difficulty-normal').click()
+    await expect(page.getByTestId('pve-hard-modes')).toHaveCount(0)
 
     // 返回主页
     await page.getByTestId('back-home').click()
@@ -118,19 +131,21 @@ test.describe('单人练习（PVE）', () => {
     expect(errors).toEqual([])
   })
 
-  test('选「极难」能正常开局，且难度真的落进了会话（读存档里的配置）', async ({ page }) => {
+  test('选「困难 · 深推演」能正常开局，且难度真的落进了会话（读存档里的配置）', async ({ page }) => {
     await openPveSetup(page)
-    await expect(page.getByTestId('pve-difficulty-oracle')).toBeEnabled()
-    await page.getByTestId('pve-difficulty-oracle').click()
+    // 默认两人局：深推演可用
+    await page.getByTestId('pve-difficulty-hard').click()
+    await expect(page.getByTestId('pve-hard-mode-rollout')).toBeEnabled()
+    await page.getByTestId('pve-hard-mode-rollout').click()
     await page.getByTestId('pve-start').click()
 
     await expect(page.getByTestId('phase-label')).toHaveText('部署')
-    // AI 自动完成部署：说明 oracle 档的策略确实被会话用上了
+    // AI 自动完成部署：说明深推演这一档的策略确实被会话用上了
     await expect
       .poll(async () => (await gameState(page)).units?.length ?? 0, { timeout: 15_000 })
       .toBeGreaterThan(0)
 
-    // 存档里存的就是这一档 —— 顺便证明"用极难开的局刷新后不会被判非法而清档"
+    // 存档里存的就是这一档 —— 顺便证明"用深推演开的局刷新后不会被判非法而清档"
     const persisted = await page.evaluate(() => {
       const raw = window.localStorage.getItem('ancient-tactics.pve')
       return raw ? (JSON.parse(raw) as { config?: { difficulty?: string } }).config?.difficulty : null
@@ -141,6 +156,21 @@ test.describe('单人练习（PVE）', () => {
     await page.reload()
     await expect(page.getByTestId('pve-setup')).toHaveCount(0)
     await expect(page.getByTestId('phase-label')).toHaveText('部署')
+  })
+
+  test('「困难」默认落在「快棋」，存档里写的仍是原来的 hard（两档 id 都没变）', async ({ page }) => {
+    await openPveSetup(page)
+    await page.getByTestId('pve-difficulty-hard').click()
+    await expect(page.getByTestId('pve-hard-mode-lookahead')).toHaveClass(/picked/)
+    await page.getByTestId('pve-start').click()
+
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+    const persisted = await page.evaluate(() => {
+      const raw = window.localStorage.getItem('ancient-tactics.pve')
+      return raw ? (JSON.parse(raw) as { config?: { difficulty?: string } }).config?.difficulty : null
+    })
+    // 界面合并了，存档格式没变 —— 老存档（含用极难开的局）零迁移
+    expect(persisted).toBe('hard')
   })
 
   test('开局 → 部署 → AI 自动部署 → 进入行动阶段', async ({ page }) => {
