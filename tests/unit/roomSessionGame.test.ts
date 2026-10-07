@@ -96,6 +96,40 @@ describe('对局指令的房间集成（房主权威）', () => {
     expect(alice.view.game?.deploy['alice']?.done).toBe(false)
   })
 
+  it('★ AI 难度：房主选的档会广播给所有人；「深推演」在多人局会被收敛成同档的「快棋」', async () => {
+    const { alice, bob } = await twoPeers(hub)
+    alice.session.setReady(true)
+    bob.session.setReady(true)
+    await vi.advanceTimersByTimeAsync(100)
+
+    // 默认「普通」
+    expect(bob.view.aiDifficulty).toBe('normal')
+
+    // 4 人局：改成「困难 · 快棋」→ 客户端看得到
+    alice.session.setAiSlots(4)
+    alice.session.setAiDifficulty('hard')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(bob.view.aiDifficulty).toBe('hard')
+
+    // 4 人局里选「深推演」不成立 → 收敛成同档的「快棋」
+    alice.session.setAiDifficulty('oracle')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(alice.view.aiDifficulty).toBe('hard')
+    expect(bob.view.aiDifficulty).toBe('hard')
+
+    // 缩回两人局后它是合法的
+    alice.session.setAiSlots(2)
+    alice.session.setAiDifficulty('oracle')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(alice.view.aiDifficulty).toBe('oracle')
+    expect(bob.view.aiDifficulty).toBe('oracle')
+
+    // 非房主改不动（房主权威）
+    bob.session.setAiDifficulty('easy')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(alice.view.aiDifficulty).toBe('oracle')
+  })
+
   it('★ AI 补位：AI 席位的名字会出现在玩家列表里（不是裸露的 ai-2）', async () => {
     const { alice, bob } = await twoPeers(hub)
     // 双方都得准备才能开局（AI 补位补的是"缺席的人"，不是"没准备好的人"）

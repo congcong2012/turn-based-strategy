@@ -1,6 +1,7 @@
 /** 传输层与联机协议的类型定义（M1 大厅 + M2 对局指令） */
 
 import type { Command, ErrorCode, GameEvent, GameState } from '../game/types'
+import type { Difficulty } from '../ai'
 
 export type PeerId = string
 export type PlayerId = string
@@ -42,6 +43,14 @@ export type LobbySnapshot = {
   mapId: string | null
   /** AI 补位：本局总共几个席位（含真人；0 = 不补位） */
   aiSlotCount: number
+  /**
+   * 替真人行动的 AI 用哪一档（**AI 补位 + 掉线托管共用**，由房主在大厅选）。
+   *
+   * 取 `Difficulty` 而不是"界面上的三档 + 模式"：这里存的是**内部难度 id**
+   * （`hard` = 困难·快棋、`oracle` = 困难·深推演），与单人练习的存档口径一致。
+   * 「深推演」在多人局不成立（它推演的是"那一个"对手的回合），由 `lobbyReducer` 收敛掉。
+   */
+  aiDifficulty: Difficulty
   /** 房主侧单调递增版本号：客户端据此丢弃过期的重排快照 */
   rev: number
 }

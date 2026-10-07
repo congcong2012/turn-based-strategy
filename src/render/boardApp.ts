@@ -33,6 +33,14 @@ const OWNER_COLORS = [0xc8503c, 0x3fa7a0, 0xd9a441, 0x8a6fd0]
 const NEUTRAL = 0x6b6255
 // 小屏（手机 393px 宽）要能一次看全 24×24 棋盘：1152px 宽 → 需要 ~0.34 倍，因此下限放到 0.2
 const MIN_SCALE = 0.2
+
+/**
+ * 触摸长按多久算"我要看这个单位"。
+ *
+ * 450ms 是经验值：短于 300ms 容易在拖拽起手时误触，长于 600ms 玩家会以为没反应。
+ * 手指一旦移动超过 8px 就取消（那是想平移地图，见 `pointermove`）。
+ */
+const LONG_PRESS_MS = 450
 /** 桌面最多放大 2 倍；触屏设备放到 3.5 倍（M7：手机上看得更清楚） */
 const MAX_SCALE_DESKTOP = 2
 const MAX_SCALE_TOUCH = 3.5
@@ -96,6 +104,19 @@ export class BoardApp {
   private pointers = new Map<number, { x: number; y: number }>()
   private pinchDistance = 0
 
+  // —— 「查看单位详情」的指针上报（悬停 / 长按）——
+  //
+  // 桌面用 hover、触摸屏用长按 —— 后者必须走定时器，因为触摸没有 hover。
+  // 上报的是**格子坐标**而不是单位：有没有东西、要不要显示卡片由上层决定
+  // （棋盘层不该知道 `GameState` 里哪个 id 是谁的部队）。
+  private inspectHandler: ((tile: { x: number; y: number } | null) => void) | null = null
+  /** 上一次上报的格子，用来吞掉同格重复上报（pointermove 每秒几十次） */
+  private lastInspectKey = ''
+  private longPressTimer: ReturnType<typeof setTimeout> | null = null
+  private longPressFrom: { x: number; y: number } | null = null
+  /** 长按已经触发过：要吃掉紧跟着的那次 pointerup，否则会顺手把单位"点选/移动"掉 */
+  private longPressFired = false
+
   async mount(container: HTMLElement): Promise<void> {
     // 动态 import：PixiJS 单独分包，只有真正进入对局时才下载
     const PIXI = await import('pixi.js')
@@ -118,8 +139,9 @@ export class BoardApp {
     })
     // React StrictMode 会"挂载→卸载→再挂载"：初始化期间已被 destroy 就直接收尾，
     // 否则 Pixi 会在未初始化的 Application 上调私有方法抛错，把整棵 React 树带崩。
+    // ★ 这里**绝不能写 `app.destroy(true)`** —— 原因见 `destroy()` 上方那段注释。
     if (this.destroyed) {
-      app.destroy(true)
+      app.destroy({ removeView: true })
       return
     }
     this.app = app
@@ -160,6 +182,14 @@ export class BoardApp {
 
   setTileHandler(handler: ((x: number, y: number) => void) | null): void {
     this.tileHandler = handler
+  }
+
+  /**
+   * 上报"指针正在看哪个格子"（悬停或长按）。传 `null` 表示离开了棋盘 / 收起详情。
+   * 上层据此决定要不要弹单位详情卡。
+   */
+  setInspectHandler(handler: ((tile: { x: number; y: number } | null) => void) | null): void {
+    this.inspectHandler = handler
   }
 
   private lastViewKey = ''
@@ -218,14 +248,37 @@ export class BoardApp {
     }
   }
 
+  /**
+   * 销毁 Pixi Application。
+   *
+   * ★★ **第一个参数必须传 `{ removeView: true }`，绝不能图省事传 `true`** ★★
+   *
+   * 这是 2026-10-07 排查 `[board] 渲染这一帧失败 … Cannot read properties of null
+   * (reading 'clear')` 得出的结论（该报错此前一直出现在**活跃对局**里，不只是页面卸载）：
+   *
+   *  1. Pixi v8 的 batch 池是**模块级全局**的（`Batcher.mjs` 的 `batchPool`），跨所有 renderer 共享；
+   *  2. `app.destroy(true)` 的第一个参数会一路传到 `AbstractRenderer.destroy(options)`，
+   *     而那里的判断是 `options === true → GlobalResourceRegistry.release()`
+   *     —— **无条件**把池里每个 Batch 都 `destroy()`（`batch.textures = null`）并把池清空；
+   *  3. 本组件是**异步挂载**的（先 `await import('pixi.js')` 再 `app.init()`），
+   *     所以 React StrictMode 的"挂载→卸载→再挂载"会让**两个 Application 同时存在**：
+   *     先被销毁的那个把全局池清空，另一个仍在正常使用它；
+   *  4. 之后任何一次 `getBatchFromPool()` 都可能拿到 `textures === null` 的 batch，
+   *     崩在 `Batcher.break()` 的 `batch.textures.clear()` —— 报错文本完全吻合。
+   *
+   * `{ removeView: true }` 只做我们真正需要的那件事（把 canvas 从 DOM 摘掉），**不碰全局池**。
+   * 跨 renderer 复用池中的 batch 是安全的：WebGL 路径每次绘制都会重新绑定
+   * shader / geometry / textures（`GlBatchAdaptor.execute`），Batch 上不留陈旧 GPU 状态。
+   */
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.clearLongPress()
     if (this.rafId !== null) cancelAnimationFrame(this.rafId)
     this.rafId = null
-    if (this.initialized) this.app.destroy(true)
+    if (this.initialized) this.app.destroy({ removeView: true })
   }
 
   /** 对比新旧状态，决定要播放的动画（移动补间 / 受击闪红） */
@@ -330,6 +383,9 @@ export class BoardApp {
   }
 
   private resize(container: HTMLElement): void {
+    // 销毁后 ResizeObserver 的回调仍可能排到队（disconnect 不能撤回已入队的通知），
+    // 而 Application.destroy 会把 renderer 置 null ⇒ 必须在这里拦掉，否则报 `reading 'resize'`
+    if (this.destroyed) return
     const w = container.clientWidth
     const h = container.clientHeight
     if (w <= 0 || h <= 0) return
@@ -412,6 +468,33 @@ export class BoardApp {
     })
   }
 
+  /** 画布坐标 → 格子坐标（越界不裁剪：上层用 `unitAt` 查不到东西自然就不显示） */
+  private tileAt(clientX: number, clientY: number): { x: number; y: number } | null {
+    const canvas = this.canvas
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: Math.floor((clientX - rect.left - this.offsetX) / this.scale / TILE),
+      y: Math.floor((clientY - rect.top - this.offsetY) / this.scale / TILE),
+    }
+  }
+
+  /** 上报"在看哪个格子"；同格重复上报直接吞掉（pointermove 每秒几十次，别每次都惊动 React） */
+  private reportInspect(tile: { x: number; y: number } | null): void {
+    const key = tile ? tile.x + ',' + tile.y : ''
+    if (key === this.lastInspectKey) return
+    this.lastInspectKey = key
+    this.inspectHandler?.(tile)
+  }
+
+  private clearLongPress(): void {
+    if (this.longPressTimer !== null) {
+      clearTimeout(this.longPressTimer)
+      this.longPressTimer = null
+    }
+    this.longPressFrom = null
+  }
+
   private attachPointerHandlers(): void {
     const canvas = this.canvas
     if (!canvas) return
@@ -431,6 +514,20 @@ export class BoardApp {
         this.pinchDistance = pinchInfo().distance
         this.moved = true // 双指期间不触发点击
       }
+      // 触摸屏没有 hover：按住不动一会儿 = "看这个格子上的单位"。
+      // 先收起上一次的详情，长按到点（450ms）后再弹出来。
+      if (event.pointerType !== 'mouse') {
+        this.longPressFired = false
+        this.clearLongPress()
+        this.reportInspect(null)
+        this.longPressFrom = { x: event.clientX, y: event.clientY }
+        const tile = this.tileAt(event.clientX, event.clientY)
+        this.longPressTimer = setTimeout(() => {
+          this.longPressTimer = null
+          this.longPressFired = true
+          this.reportInspect(tile)
+        }, LONG_PRESS_MS)
+      }
       try {
         canvas.setPointerCapture(event.pointerId)
       } catch {
@@ -440,6 +537,15 @@ export class BoardApp {
     canvas.addEventListener('pointermove', (event) => {
       if (this.pointers.has(event.pointerId)) {
         this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      }
+      // 长按期间手一动就当"拖拽平移"，不再弹详情
+      if (this.longPressFrom && !this.moved) {
+        const d = Math.abs(event.clientX - this.longPressFrom.x) + Math.abs(event.clientY - this.longPressFrom.y)
+        if (d > 8) this.clearLongPress()
+      }
+      // 桌面：指针停在哪个格子上就看哪个格子（没按着键才叫 hover）
+      if (event.pointerType === 'mouse' && this.pointers.size === 0) {
+        this.reportInspect(this.tileAt(event.clientX, event.clientY))
       }
       // 双指缩放：按两指距离变化缩放，并以两指中点为锚
       if (this.pointers.size >= 2) {
@@ -471,11 +577,19 @@ export class BoardApp {
       this.pointers.delete(event.pointerId)
       if (this.pointers.size < 2) this.pinchDistance = 0
       this.dragging = this.pointers.size > 0
+      this.clearLongPress()
+      // 长按已经弹过详情了：这一次抬手不该再被当成"点选/移动该格"
+      if (this.longPressFired) {
+        this.longPressFired = false
+        return
+      }
       if (this.moved) return
-      const rect = canvas.getBoundingClientRect()
-      const x = Math.floor((event.clientX - rect.left - this.offsetX) / this.scale / TILE)
-      const y = Math.floor((event.clientY - rect.top - this.offsetY) / this.scale / TILE)
-      this.tileHandler?.(x, y)
+      const tile = this.tileAt(event.clientX, event.clientY)
+      if (tile) this.tileHandler?.(tile.x, tile.y)
+    })
+    // 鼠标移出棋盘就把详情收起来；触摸没有 hover，靠下一次按下收起
+    canvas.addEventListener('pointerleave', (event) => {
+      if (event.pointerType === 'mouse') this.reportInspect(null)
     })
     canvas.addEventListener('wheel', (event) => {
       event.preventDefault()
@@ -507,7 +621,8 @@ export class BoardApp {
     { body: import('pixi.js').Graphics; halo: import('pixi.js').Graphics; glyph: import('pixi.js').Text; bar: import('pixi.js').Graphics }
   >()
   private terrainKey = ''
-  private renderErrorLogged = false
+  /** 渲染失败累计次数（见 render() 的 catch）。以前是个"只报一次"的布尔量，改计数以便断言 */
+  private renderErrors = 0
   private renderScheduled = false
 
   /** 文本对象池：复用 Text，避免每次重绘都新建（Pixi 的 Text 会各自持有纹理） */
@@ -712,12 +827,17 @@ export class BoardApp {
     try {
       this.app.render()
     } catch (err) {
-      // 渲染出错不能让整棵 React 树挂掉（否则玩家直接掉线）：
-      // 记一次日志，跳过这一帧，等下一次状态变化再重画
-      if (!this.renderErrorLogged) {
-        this.renderErrorLogged = true
-        console.error('[board] 渲染这一帧失败，已跳过：', err)
-      }
+      // 渲染出错不能让整棵 React 树挂掉（否则玩家直接掉线）：跳过这一帧，等下一次状态变化再重画。
+      // ★ 计数保留、日志只打第一条：以前只有个布尔量，**没人知道它到底多频繁**
+      //   （2026-10-07 排查时就是被这一点耽误了）。计数通过 `__atBoard.renderErrors()` 暴露，
+      //   让 E2E 能直接断言为 0 —— 从"被掩盖的噪音"变成"红灯"。
+      this.renderErrors += 1
+      if (this.renderErrors === 1) console.error('[board] 渲染这一帧失败，已跳过：', err)
     }
+  }
+
+  /** 累计渲染失败次数；DEV/E2E 诊断用（不为 0 就是真 bug） */
+  getRenderErrorCount(): number {
+    return this.renderErrors
   }
 }

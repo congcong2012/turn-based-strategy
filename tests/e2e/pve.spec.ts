@@ -15,9 +15,29 @@ async function boardBox(page: Page) {
   return box
 }
 
+/**
+ * 等 DEV 调试对象就绪。
+ *
+ * `__atBoard` 是在 Pixi **挂载完成**（动态 import + Application.init）之后才赋值的，
+ * 而"部署阶段"文案、甚至 canvas 元素出现得都更早 —— 直接拿去用会读到 `undefined`。
+ * CI 比本机慢，这个竞态在那里会真的翻车（v1.5.0 的 CI 就栽在这）。
+ */
+async function waitForBoardApi(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => typeof (globalThis as unknown as { __atBoard?: unknown }).__atBoard !== 'undefined',
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(true)
+}
+
 /** 点击棋盘上的某个格子（真实鼠标事件） */
 async function clickTile(page: Page, x: number, y: number): Promise<void> {
   const box = await boardBox(page)
+  await waitForBoardApi(page)
   const point = await page.evaluate(
     ([tx, ty]) =>
       (globalThis as unknown as { __atBoard: { project: (x: number, y: number) => { x: number; y: number } } }).__atBoard.project(
@@ -401,5 +421,174 @@ test.describe('单人练习（PVE）', () => {
     await page.getByTestId('entry-pve').click()
     await expect(page.getByTestId('pve-setup')).toBeVisible()
     await expect(page.getByTestId('pve-badge')).toHaveCount(0)
+  })
+
+  /**
+   * 悬停查看单位详情（桌面）。触摸屏那条走长按，见 `mobile.spec.ts`。
+   * 数值必须来自 `src/data/units.json`，所以断言的是"刀盾兵 / HP 100/100"这类真值。
+   */
+  test('★ 悬停查看单位详情：显示兵种与当前状态，移开即收起', async ({ page }) => {
+    await openPveSetup(page)
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+
+    // 放一个刀盾兵到 (2,0)（与其它用例同一个落点，确认是合法部署格）
+    await page.getByTestId('deploy-sword').click()
+    await clickTile(page, 2, 0)
+
+    const box = await boardBox(page)
+    const project = async (x: number, y: number) =>
+      page.evaluate(
+        ([tx, ty]) =>
+          (globalThis as unknown as { __atBoard: { project: (x: number, y: number) => { x: number; y: number } } }).__atBoard.project(
+            tx,
+            ty,
+          ),
+        [x, y] as const,
+      )
+    const unitPoint = await project(2, 0)
+    // 找一个**空格子**来验证"悬停空格子不弹卡片"：不硬编码地图知识，直接从局面里挑
+    const emptyTile = await page.evaluate(() => {
+      const s = (
+        globalThis as unknown as { __atGame: { getState: () => { units: Array<{ x: number; y: number }> } } }
+      ).__atGame.getState()
+      const taken = new Set(s.units.map((u) => u.x + ',' + u.y))
+      for (let y = 6; y < 18; y += 1) {
+        for (let x = 6; x < 18; x += 1) if (!taken.has(x + ',' + y)) return { x, y }
+      }
+      return { x: 12, y: 12 }
+    })
+    const emptyPoint = await project(emptyTile.x, emptyTile.y)
+
+    // 先停在空格子上：不该有卡片
+    await page.mouse.move(box.x + emptyPoint.x, box.y + emptyPoint.y)
+    await expect(page.getByTestId('unit-detail')).toHaveCount(0)
+
+    // 悬停到单位上 → 弹出详情（数值来自 src/data/units.json）
+    await page.mouse.move(box.x + unitPoint.x, box.y + unitPoint.y)
+    await expect(page.getByTestId('unit-detail')).toBeVisible()
+    await expect(page.getByTestId('unit-detail-name')).toContainText('刀盾兵')
+    await expect(page.getByTestId('unit-detail-hp')).toHaveText('HP 100/100')
+    await expect(page.getByTestId('unit-detail-state')).toContainText('本回合还没动')
+
+    // 悬停回空格子 → 收起
+    await page.mouse.move(box.x + emptyPoint.x, box.y + emptyPoint.y)
+    await expect(page.getByTestId('unit-detail')).toHaveCount(0)
+
+    // 指针移出棋盘 → 同样收起
+    await page.mouse.move(box.x + unitPoint.x, box.y + unitPoint.y)
+    await expect(page.getByTestId('unit-detail')).toBeVisible()
+    await page.mouse.move(1, 1)
+    await expect(page.getByTestId('unit-detail')).toHaveCount(0)
+  })
+
+  /**
+   * 触摸长按查看单位详情。触摸屏没有 hover，所以走 `pointerdown` 计时（450ms）。
+   *
+   * 用**合成 PointerEvent**（`pointerType: 'touch'`）而不是真触摸：这样不必额外开
+   * `hasTouch` 上下文，而且能精确控制"按住多久"（真触摸的 down/up 间隔控制不了）。
+   * 同时验证：长按之后的那次抬手**不该再被当成点选/移动**（否则会顺手把单位挪走）。
+   */
+  test('★ 长按查看单位详情：弹卡片且不吃掉操作（长按不等于点选）', async ({ page }) => {
+    await openPveSetup(page)
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+
+    // 合成触摸事件（pointerType: 'touch'）—— 这样不必开 hasTouch 上下文，
+    // 也能精确控制"按住多久"（真触摸的 down/up 间隔控制不了）
+    const touch = (type: 'pointerdown' | 'pointerup', x: number, y: number) =>
+      page.evaluate(
+        ([kind, tx, ty]) => {
+          const canvas = document.querySelector('.board-host canvas')
+          if (!canvas) throw new Error('no canvas')
+          const rect = canvas.getBoundingClientRect()
+          const p = (
+            globalThis as unknown as { __atBoard: { project: (x: number, y: number) => { x: number; y: number } } }
+          ).__atBoard.project(tx, ty)
+          canvas.dispatchEvent(
+            new PointerEvent(kind, {
+              pointerId: 1,
+              pointerType: 'touch',
+              isPrimary: true,
+              clientX: rect.left + p.x,
+              clientY: rect.top + p.y,
+              bubbles: true,
+            }),
+          )
+        },
+        [type, x, y] as const,
+      )
+    const unitCount = async () => (await gameState(page)).units?.length ?? 0
+
+    // ★ AI 一开局就把自己的兵摆完了（默认 1 个对手 = 4 个兵），所以只能跟**基线**比，
+    //   不能断言绝对条数 —— 这一条第一次就写错了，白白查了半天。
+    await expect.poll(unitCount, { timeout: 10_000 }).toBeGreaterThanOrEqual(1)
+    const baseline = await unitCount()
+
+    // 1) 先用普通点击放一个兵到 (2,0)
+    await page.getByTestId('deploy-sword').click()
+    await clickTile(page, 2, 0)
+    await expect.poll(unitCount, { timeout: 10_000 }).toBe(baseline + 1)
+
+    // 2) 长按这个兵 → 弹详情；抬手后卡片留着（手机上不该一松手就没了）
+    await touch('pointerdown', 2, 0)
+    await expect(page.getByTestId('unit-detail')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('unit-detail-name')).toContainText('刀盾兵')
+    await touch('pointerup', 2, 0)
+    await expect(page.getByTestId('unit-detail')).toBeVisible()
+
+    // 3) ★ 关键：长按之后紧接着的一次"轻点"要照常生效 —— 长按不能把随后的点击吃掉
+    await touch('pointerdown', 3, 0)
+    await touch('pointerup', 3, 0)
+    await expect.poll(unitCount, { timeout: 10_000 }).toBe(baseline + 2)
+  })
+
+  /**
+   * ★ 回归（不变量）：棋盘反复挂载/卸载后，**渲染失败计数必须为 0**、控制台也不该出现
+   * `[board] 渲染这一帧失败 … reading 'clear'`。
+   *
+   * 这个报错来自 Pixi 的**全局** batch 池被 `app.destroy(true)` 清空（根因与确定性复现见
+   * `tests/e2e/game.spec.ts` 的「棋盘渲染（Pixi 全局 batch 池）」；修法见
+   * `src/render/boardApp.ts` 的 `destroy()`）。这里走的是**端到端**路径：
+   * 连进三局，每局进入都会挂一个 Pixi Application、退出时会销毁它。
+   */
+  test('★ 回归：棋盘反复挂载/卸载后渲染失败计数为 0', async ({ page }) => {
+    const boardErrors: string[] = []
+    page.on('console', (msg) => {
+      const text = msg.text()
+      if (text.includes('渲染这一帧失败') || text.includes("reading 'clear'")) boardErrors.push(text)
+    })
+    page.on('pageerror', (err) => boardErrors.push('pageerror: ' + err.message))
+
+    for (let round = 0; round < 3; round += 1) {
+      await openPveSetup(page)
+      await page.getByTestId('pve-opponents-1').click()
+      await page.getByTestId('pve-start').click()
+      await expect(page.getByTestId('phase-label')).toHaveText('部署')
+      await expect(page.locator('.board-host canvas')).toBeVisible()
+      await page.getByTestId('leave-button').click()
+      await expect(page.getByTestId('entry-online')).toBeVisible()
+    }
+
+    expect(boardErrors).toEqual([])
+
+    // 再进一局，直接读计数器（DEV 下 __atBoard 暴露了 renderErrors）。
+    // ⚠️ 必须**轮询等它就绪**：`__atBoard` 是在 Pixi 挂载完成（动态 import + init）之后才赋值的，
+    // 而"部署阶段"文案出现得更早 —— CI 比本机慢，直接读会 `undefined.renderErrors`（v1.5.0 就栽在这）。
+    await openPveSetup(page)
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const board = (globalThis as unknown as { __atBoard?: { renderErrors: () => number } }).__atBoard
+            return board ? board.renderErrors() : -1 // -1 = 还没挂上，继续等
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(0)
   })
 })

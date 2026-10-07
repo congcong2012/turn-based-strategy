@@ -161,6 +161,41 @@ test.describe('AI 补位与观战（本地传输）', () => {
       .toBe(true)
   })
 
+  test('★ AI 难度：房主可选档并同步给客机；「深推演」在多人局被禁用并说明原因', async ({ context }) => {
+    const alice = await context.newPage()
+    const bob = await context.newPage()
+    await alice.goto(localUrl('ad-a', '甲将军'))
+    await joinRoom(alice, ROOM, '甲将军')
+    await waitForHost(alice)
+    await bob.goto(localUrl('ad-b', '乙将军'))
+    await joinRoom(bob, ROOM, '乙将军')
+    await expect(alice.getByTestId('player-item')).toHaveCount(2)
+
+    const picker = alice.getByTestId('ai-difficulty-select')
+    const oracleOption = picker.locator('option[value="oracle"]')
+
+    // 默认「普通」——不掉线的人既不该被更强的 AI 惩罚，也不该被白送
+    await expect(picker).toHaveValue('normal')
+    await expect(bob.getByTestId('ai-difficulty-label')).toHaveText('普通')
+
+    // 房主改成「困难 · 快棋」→ 客机看到的是带档位的完整名字
+    await picker.selectOption('hard')
+    await expect(bob.getByTestId('ai-difficulty-label')).toHaveText('困难 · 快棋')
+
+    // 选「共 4 方」后，「深推演」不再可选（它只在两人局成立）并给出说明
+    await alice.getByTestId('ai-slots-select').selectOption('4')
+    await expect(oracleOption).toHaveAttribute('disabled', '')
+    await expect(alice.getByTestId('ai-deep-scope-hint')).toBeVisible()
+
+    // 缩回两人局 → 恢复可选，且选中后客机也同步
+    await alice.getByTestId('ai-slots-select').selectOption('2')
+    await expect(oracleOption).not.toHaveAttribute('disabled', '')
+    await picker.selectOption('oracle')
+    await expect(bob.getByTestId('ai-difficulty-label')).toHaveText('困难 · 深推演')
+    // 这一档也用于掉线托管，界面上要说清楚
+    await expect(alice.getByTestId('ai-difficulty-hint')).toContainText('掉线托管')
+  })
+
   test('★ 观战：不占席位、能看到对局，但界面上没有可操作按钮', async ({ context }) => {
     const alice = await context.newPage()
     const bob = await context.newPage()

@@ -62,6 +62,37 @@ export function isPlayableDifficulty(value: unknown): value is PlayableDifficult
 }
 
 /**
+ * 「深推演」的档位 id。界面上它不是独立档，而是「困难」的第二种算法模式
+ * （另一种是「快棋」= `hard`）—— 详见 `PLAYABLE_DIFFICULTIES` 的注释。
+ */
+export const DEEP_DIFFICULTY: Difficulty = 'oracle'
+
+/**
+ * 「深推演」最多支持几人局。
+ *
+ * 它的机制是"我走完这回合 → **对手**走完这回合"再评估，这个前提只在**只有一个对手**时成立；
+ * 3 人以上是多方混战、非零和，内核会保守退回一步前瞻（也就是「快棋」的算法）。
+ * 与其让玩家选一个"看起来更狠、其实一样"的档，不如禁用它并说明原因。
+ *
+ * ★ 这条规则由**单人练习（PVE 设置页）与联机（大厅 AI 补位 / 掉线托管）共用**，
+ *   所以放在 AI 层做单一事实源，别在两处各写一份。
+ */
+export const DEEP_DIFFICULTY_MAX_PLAYERS = 2
+
+/** 该档在"本局共 totalPlayers 方"时是否可用（除深推演外的档任何时候都可用） */
+export function isDifficultyUsable(difficulty: Difficulty, totalPlayers: number): boolean {
+  return difficulty !== DEEP_DIFFICULTY || totalPlayers <= DEEP_DIFFICULTY_MAX_PLAYERS
+}
+
+/**
+ * 把**当前局面用不了**的档收敛成一个能用的档：深推演 → 同档的「快棋」（`hard`）。
+ * 其它档原样返回。调用方负责把"为什么被动过"告诉玩家（UI 上就是禁用 + 一句说明）。
+ */
+export function resolveDifficulty(difficulty: Difficulty, totalPlayers: number): Difficulty {
+  return isDifficultyUsable(difficulty, totalPlayers) ? difficulty : 'hard'
+}
+
+/**
  * 部署计划：4 个兵刚好用满 4000 预算。
  *
  * 为什么是 4 个而不是 3 个：`deployMaxUnits` 是 4，而最便宜的兵 1000 ——

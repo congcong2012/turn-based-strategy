@@ -5,8 +5,11 @@ import {
   createLobby,
   hasPlayer,
   isFull,
+  lobbyAllowsDeepAi,
   recompute,
   removePlayer,
+  setAiDifficulty,
+  setAiSlotCount,
   setHostId,
   setNickname,
   setReady,
@@ -90,5 +93,54 @@ describe('房主端大厅名单', () => {
 
     lobby = setHostId(lobby, 'bob')
     expect(recompute(lobby).players[0].isHost).toBe(true)
+  })
+})
+
+describe('AI 档（AI 补位 + 掉线托管共用）', () => {
+  const withPlayers = (n: number) => {
+    let lobby = createLobby('room01', 'alice')
+    lobby = upsertPlayer(lobby, alice)
+    if (n > 1) lobby = upsertPlayer(lobby, bob)
+    return lobby
+  }
+
+  it('默认是「普通」—— 不掉线的人既不该被更强的 AI 惩罚，也不该被白送', () => {
+    expect(createLobby('room01', 'alice').aiDifficulty).toBe('normal')
+  })
+
+  it('房主可以改成其它档，reducer 原样存下', () => {
+    const lobby = setAiDifficulty(withPlayers(2), 'hard')
+    expect(lobby.aiDifficulty).toBe('hard')
+  })
+
+  it('★ 「深推演」只保留在两人局：多人局里选它会被收敛成同档的「快棋」', () => {
+    // 4 人局（补到 4 方）里选深推演 → 收敛成 hard（快棋）
+    const four = setAiSlotCount(withPlayers(2), 4)
+    expect(setAiDifficulty(four, 'oracle').aiDifficulty).toBe('hard')
+    // 2 人局里它是合法的
+    const two = setAiSlotCount(withPlayers(2), 2)
+    expect(setAiDifficulty(two, 'oracle').aiDifficulty).toBe('oracle')
+  })
+
+  it('★ 反过来也要收敛：已经选了深推演，再把席位数调到多人 → 自动落回快棋', () => {
+    let lobby = setAiSlotCount(withPlayers(2), 2)
+    lobby = setAiDifficulty(lobby, 'oracle')
+    expect(lobby.aiDifficulty).toBe('oracle')
+
+    lobby = setAiSlotCount(lobby, 4)
+    expect(lobby.aiDifficulty).toBe('hard')
+  })
+
+  it('不补位时按"真人数"判断：只有 2 个真人 → 深推演仍可选（掉线托管也会用它）', () => {
+    const lobby = setAiDifficulty(withPlayers(2), 'oracle')
+    expect(lobby.aiSlotCount).toBe(0)
+    expect(lobby.aiDifficulty).toBe('oracle')
+    expect(lobbyAllowsDeepAi(lobby)).toBe(true)
+  })
+
+  it('lobbyAllowsDeepAi：3 个真人时不补位 → 深推演不可选（UI 据此禁用）', () => {
+    let lobby = withPlayers(2)
+    lobby = upsertPlayer(lobby, { playerId: 'carol', nickname: '丙' })
+    expect(lobbyAllowsDeepAi(lobby)).toBe(false)
   })
 })

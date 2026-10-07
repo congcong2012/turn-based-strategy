@@ -17,11 +17,13 @@ import {
 import type { ElectionEffect, ElectionState } from '../app/hostElection'
 import {
   createLobby,
+  DEFAULT_AI_DIFFICULTY,
   hasPlayer,
   isFull,
   markConnected,
   markDisconnected,
   removePlayer,
+  setAiDifficulty as lobbySetAiDifficulty,
   setAiSlotCount as lobbySetAiSlotCount,
   setMapId as lobbySetMapId,
   setNickname as lobbySetNickname,
@@ -36,7 +38,7 @@ import { describeTransportError } from './transportErrorText'
 import type { ManualRole, ManualTransport } from './manualTransport'
 import { defaultStorage, loadGame, saveGame } from './gameStore'
 import type { GameStorage } from './gameStore'
-import { MAX_AI_STEPS, nextCommand } from '../ai'
+import { MAX_AI_STEPS, nextCommand, resolveDifficulty } from '../ai'
 import type { Difficulty } from '../ai'
 import { applyCommand } from '../game/commands'
 import { defaultMapFor } from '../game/data'
@@ -68,13 +70,14 @@ const TAKEOVER_STEP_MS = 450
 /** 托管一个回合最多走多少步（兜底，绝不死循环） */
 const TAKEOVER_MAX_STEPS = MAX_AI_STEPS
 /**
- * 用哪一档 AI 代替真人行动（掉线托管 + AI 补位）。
- * 取「普通」：不掉线的人既不该被更强的 AI 惩罚，也不该被白送。
+ * 用哪一档 AI 代替真人行动（**掉线托管 + AI 补位共用**）。
  *
- * 已预留"按房间配置"的位置（房主未来若要开"困难 AI 补位"，只需把这里换成
- * `lobby.aiDifficulty` 之类的字段，UI 加一个下拉即可）。
+ * 由房主在大厅设置（`lobby.aiDifficulty`），默认「普通」：
+ * 不掉线的人既不该被更强的 AI 惩罚，也不该被白送。
+ *
+ * ⚠️ 取值一律走会话内的 `currentAiDifficulty()` 收敛 —— 房主可能在两人局选了「深推演」，
+ * 之后又有人加入变成 3–4 人局，那种局面下它只会退化成一步前瞻，必须如实回落。
  */
-const TAKEOVER_DIFFICULTY: Difficulty = 'normal'
 
 /**
  * AI 补位席位的 id 前缀。
@@ -113,6 +116,13 @@ export interface RoomView {
    * 房主在大厅可调，开局时一次性生效（之后随 lobby 快照同步给所有人）。
    */
   aiSlotCount: number
+  /**
+   * 替真人行动的 AI 用哪一档（掉线托管 + AI 补位共用，房主在大厅设置）。
+   *
+   * 存的是**内部难度 id**：`hard` = 困难·快棋、`oracle` = 困难·深推演。
+   * 注意它可能被收敛：`oracle` 只在两人局成立，多人局里会回落成 `hard`（见 `resolveDifficulty`）。
+   */
+  aiDifficulty: Difficulty
   /** 本会话是不是观战者（只读：不占席位、不能操作） */
   spectating: boolean
   /** 是否启用了房间密码（只暴露布尔值，不回显明文） */
@@ -186,6 +196,8 @@ export interface RoomSession {
   setMap: (mapId: string | null) => void
   /** 设置 AI 补位（本局总共几个席位、含真人；0 = 不补位）。仅房主有效 */
   setAiSlots: (count: number) => void
+  /** 房主选"替真人行动的 AI 用哪一档"（掉线托管 + AI 补位共用；仅房主有效） */
+  setAiDifficulty: (difficulty: Difficulty) => void
   /** 房主：LOBBY → DEPLOY，创建权威对局状态 */
   startGame: () => void
   /** 任何玩家：发出对局指令（房主本地校验，客户端发给房主校验） */
@@ -236,6 +248,24 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
    * 房主在大厅设置，开局时一次性决定，之后随 lobby 快照同步给所有人。
    */
   let aiSlotCount = 0
+  /**
+   * 替真人行动的 AI 用哪一档（掉线托管 + AI 补位共用）。
+   * 与 `aiSlotCount` 一样由房主在大厅设置、随 lobby 快照同步。
+   */
+  let aiDifficulty: Difficulty = DEFAULT_AI_DIFFICULTY
+
+  /**
+   * 本局**实际**该用哪一档（把大厅设置按真实人数收敛一次）。
+   *
+   * 唯一的收敛规则：「深推演」（`oracle`）只在两人局成立 —— 房主先在两人局选了它、
+   * 之后又有人加入变成 3–4 人局时，内核只会退化成一步前瞻，这里如实回落到「快棋」（`hard`）。
+   * 大厅侧（`lobbyReducer`）也收敛过一道，这里是第二道保险，用**实际**的 `game.players`。
+   */
+  function currentAiDifficulty(): Difficulty {
+    const picked = lobby?.aiDifficulty ?? aiDifficulty
+    // 还没开局（game 为空）时按 2 人算：此刻收敛与否都不影响，开局后会再算一次
+    return resolveDifficulty(picked, game?.players.length ?? 2)
+  }
   /**
    * 观战模式：本会话是**只读客户端** —— 不占对局席位、不发指令、不参与准备。
    * 本作没有战争迷雾，观战者看到的与任何一名玩家相同，因此不需要裁剪信息。
@@ -373,6 +403,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       mapId: lobby?.mapId ?? null,
       // 以 lobby 快照为准：客户端只能从快照得知这个设置（房主侧两者本就一致）
       aiSlotCount: lobby?.aiSlotCount ?? aiSlotCount,
+      aiDifficulty: lobby?.aiDifficulty ?? aiDifficulty,
       spectating,
       passwordEnabled: roomPassword !== null,
       myTurn: game !== null && game.phase === 'PLAYING' && game.players[game.turnIndex] === selfId,
@@ -481,7 +512,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       return
     }
 
-    const cmd = nextCommand(game, actor, TAKEOVER_DIFFICULTY)
+    const cmd = nextCommand(game, actor, currentAiDifficulty())
     // ⚠️ 别用 `state.rev` 判断指令有没有生效：`wait` 分支**不会**自增 rev（commands.ts 里
     //    其它分支都有 `s.rev += 1`，只有它没有），拿 rev 当代理会把合法的 wait 误判成"被拒"，
     //    于是托管第一步就停、回合永远交不出去。直接用 runCommand 的真实返回值。
@@ -517,7 +548,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         (p) => p.startsWith(AI_SEAT_PREFIX) && !game?.deploy[p]?.done,
       )
       if (!pending) return
-      if (!runCommand(pending, nextCommand(game, pending, TAKEOVER_DIFFICULTY))) {
+      if (!runCommand(pending, nextCommand(game, pending, currentAiDifficulty()))) {
         // 指令被拒（理论上不该发生）：停下，别死循环
         return
       }
@@ -729,6 +760,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
           // 若是掉线玩家回来了：恢复席位（对局进行中我们保留了他的座位）
           lobby = markConnected(lobby, msg.from)
           aiSlotCount = lobby.aiSlotCount
+          aiDifficulty = lobby.aiDifficulty
           // 若对局已开始，补发完整快照（断线重连 / 中途加入）
           if (game) transport?.send({ t: 'game', from: selfId, state: game }, peerId)
           else maybeRestoreGame()
@@ -1170,7 +1202,21 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       if (!isHost() || !lobby) return
       lobby = lobbySetAiSlotCount(lobby, count)
       aiSlotCount = lobby.aiSlotCount
+      // 改席位数会连带收敛 AI 档（例如从 2 方改成 4 方时「深推演」不再成立）—— 一起同步
+      aiDifficulty = lobby.aiDifficulty
       // rev 由 broadcastLobby 统一 +1（这里别自己加，否则客户端会跳过一版快照）
+      broadcastLobby()
+      emit()
+    },
+
+    /**
+     * 房主选"替真人行动的 AI 用哪一档"（掉线托管 + AI 补位共用）。
+     * 与 `setAiSlots` 一样：只改房主的权威快照，再统一广播。
+     */
+    setAiDifficulty(difficulty: Difficulty): void {
+      if (!isHost() || !lobby) return
+      lobby = lobbySetAiDifficulty(lobby, difficulty)
+      aiDifficulty = lobby.aiDifficulty
       broadcastLobby()
       emit()
     },

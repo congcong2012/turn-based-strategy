@@ -243,6 +243,7 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
       takeOverDisconnectedTurn: noop,
       setMap: noop,
       setAiSlots: noop,
+      setAiDifficulty: noop,
       startManualPairing: noop,
       submitManualCode: noop,
       retryConnection: noop,

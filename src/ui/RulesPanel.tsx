@@ -1,6 +1,7 @@
 import { DATA, getMap } from '../game/data'
 import { versionLine } from '../version'
 import type { Page } from '../app/route'
+import { MOVE_TYPES, MOVE_TYPE_LABEL, attackKindLabel, rangeLabel } from './unitText'
 
 export interface RulesPanelProps {
   onNavigate: (page: Page) => void
@@ -9,9 +10,6 @@ export interface RulesPanelProps {
 /** 规则速查：全部从 src/data/*.json 渲染，永远和实际数值一致 */
 export function RulesPanel({ onNavigate }: RulesPanelProps) {
   const map = getMap('ancient_01')
-  const moveTypes = ['foot', 'horse', 'siege'] as const
-  const moveLabel: Record<string, string> = { foot: '步行', horse: '骑乘', siege: '器械' }
-
   return (
     <div className="app rules-page">
       <header className="app-header">
@@ -52,9 +50,9 @@ export function RulesPanel({ onNavigate }: RulesPanelProps) {
               <tr key={unit.id}>
                 <td>{unit.glyph} {unit.name}</td>
                 <td>{unit.hp}</td>
-                <td>{unit.move}（{moveLabel[unit.moveType]}）</td>
-                <td>{unit.rangeMin === unit.rangeMax ? unit.rangeMin : unit.rangeMin + '–' + unit.rangeMax}</td>
-                <td>{unit.attack === 'direct' ? '直射' : '间接'}</td>
+                <td>{unit.move}（{MOVE_TYPE_LABEL[unit.moveType]}）</td>
+                <td>{rangeLabel(unit)}</td>
+                <td>{attackKindLabel(unit.attack)}</td>
                 <td>{unit.counter ? '是' : '否'}</td>
                 <td>{unit.capture ? '是' : '否'}</td>
                 <td>{unit.cost}</td>
@@ -118,8 +116,8 @@ export function RulesPanel({ onNavigate }: RulesPanelProps) {
           <thead>
             <tr>
               <th>地形</th>
-              {moveTypes.map((type) => (
-                <th key={type}>{moveLabel[type]}消耗</th>
+              {MOVE_TYPES.map((type) => (
+                <th key={type}>{MOVE_TYPE_LABEL[type]}消耗</th>
               ))}
               <th>减伤</th>
             </tr>
@@ -128,7 +126,7 @@ export function RulesPanel({ onNavigate }: RulesPanelProps) {
             {Object.values(DATA.terrain).map((terrain) => (
               <tr key={terrain.id}>
                 <td>{terrain.name}</td>
-                {moveTypes.map((type) => (
+                {MOVE_TYPES.map((type) => (
                   <td key={type}>{terrain.moveCost[type] === null ? '不可通行' : terrain.moveCost[type]}</td>
                 ))}
                 <td>{Math.round(terrain.defense * 100)}%</td>

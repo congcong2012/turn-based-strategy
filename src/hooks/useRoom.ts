@@ -12,9 +12,11 @@ import {
 } from '../app/identity'
 import type { Identity } from '../app/identity'
 import { transportFactoryFor } from '../net/createTransport'
+import { DEFAULT_AI_DIFFICULTY } from '../app/lobbyReducer'
 import { createRoomSession } from '../net/roomSession'
 import type { RoomSession, RoomView } from '../net/roomSession'
 import type { SignalStrategy, TransportKind } from '../net/types'
+import type { Difficulty } from '../ai'
 import type { Command } from '../game/types'
 import { clearGame, defaultStorage } from '../net/gameStore'
 
@@ -38,6 +40,11 @@ export interface RoomActions {
   setMap: (mapId: string | null) => void
   /** 房主：设置 AI 补位（本局总共几个席位、含真人；0 = 不补位） */
   setAiSlots: (count: number) => void
+  /**
+   * 房主：选"替真人行动的 AI 用哪一档"（**掉线托管 + AI 补位共用**）。
+   * 传内部难度 id（`hard` = 困难·快棋、`oracle` = 困难·深推演）；后者只在两人局成立。
+   */
+  setAiDifficulty: (difficulty: Difficulty) => void
   /** 手动直连：开始配对（host = 生成邀请码，guest = 等待粘贴邀请码） */
   startManualPairing: (roomCode: string, role: 'host' | 'guest', nickname: string) => void
   /** 手动直连：提交对方的连接码 */
@@ -81,6 +88,7 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     paused: false,
     pausedReason: 'none',
     aiSlotCount: 0,
+    aiDifficulty: DEFAULT_AI_DIFFICULTY,
     spectating: false,
     canSkipTurn: false,
     canTakeOver: false,
@@ -241,6 +249,10 @@ export function useRoom(): UseRoomResult {
   const takeOverDisconnectedTurn = useCallback(() => sessionRef.current?.takeOverDisconnectedTurn(), [])
   const setMap = useCallback((mapId: string | null) => sessionRef.current?.setMap(mapId), [])
   const setAiSlots = useCallback((count: number) => sessionRef.current?.setAiSlots(count), [])
+  const setAiDifficulty = useCallback(
+    (difficulty: Difficulty) => sessionRef.current?.setAiDifficulty(difficulty),
+    [],
+  )
   const startManualPairing = useCallback(
     (roomCode: string, role: 'host' | 'guest', nickname: string) => {
       const clean = roomCode
@@ -294,6 +306,7 @@ export function useRoom(): UseRoomResult {
       takeOverDisconnectedTurn,
       setMap,
       setAiSlots,
+      setAiDifficulty,
       startManualPairing,
       submitManualCode,
       retryConnection,
@@ -309,6 +322,8 @@ export function useRoom(): UseRoomResult {
       skipDisconnectedTurn,
       takeOverDisconnectedTurn,
       setMap,
+      setAiSlots,
+      setAiDifficulty,
       startManualPairing,
       submitManualCode,
       retryConnection,

@@ -14,6 +14,7 @@ import { ConnectionHelp } from './ConnectionHelp'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { isSoundOn, playSound, setSoundOn, soundForEvent } from './sound'
 import { EMPTY_TAP_STATE, isTouchDevice, nextTapState } from './tapConfirm'
+import { MOVE_TYPE_LABEL, attackKindLabel, rangeLabel } from './unitText'
 import type { TapConfirmState } from './tapConfirm'
 import type { BoardView } from '../render/boardApp'
 
@@ -49,6 +50,13 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
   const [tapState, setTapState] = useState<TapConfirmState>(EMPTY_TAP_STATE)
   const touch = useMemo(() => isTouchDevice(), [])
   const [focus, setFocus] = useState<FocusRequest | null>(null)
+  /**
+   * 正在"看"的格子（桌面悬停 / 触摸长按）。null = 不显示单位详情卡。
+   *
+   * 存**格子**而不是单位 id：详情卡是"看这个位置有什么"，格子上没单位时自然就不显示，
+   * 也不需要在下一次状态更新时去清理失效的 id。
+   */
+  const [inspectAt, setInspectAt] = useState<{ x: number; y: number } | null>(null)
   const focusNonce = useRef(0)
   const requestFocus = useCallback((x0: number, y0: number, x1: number, y1: number) => {
     focusNonce.current += 1
@@ -99,6 +107,8 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
   const myDeploy = game.deploy[view.selfId]
   const selectedUnit = game.units.find((u) => u.id === selectedUnitId) ?? null
   const selectedBuilding = game.buildings.find((b) => b.id === selectedBuildingId) ?? null
+  /** 悬停 / 长按看到的那个单位（没有就不显示详情卡） */
+  const inspectedUnit = inspectAt ? (unitAt(game, inspectAt.x, inspectAt.y) ?? null) : null
 
   const reachable = useMemo(() => {
     if (!selectedUnit || !view.myTurn) return []
@@ -451,12 +461,63 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
       ) : null}
 
       <div className="game-body">
-        <BoardCanvas
-          view={boardView}
-          onTileClick={onTileClick}
-          focus={focus}
-          exposeDebug={import.meta.env.DEV || new URLSearchParams(window.location.search).has('debug')}
-        />
+        <div className="board-area">
+          <BoardCanvas
+            view={boardView}
+            onTileClick={onTileClick}
+            onInspect={setInspectAt}
+            focus={focus}
+            exposeDebug={import.meta.env.DEV || new URLSearchParams(window.location.search).has('debug')}
+          />
+          {/*
+            单位详情卡：桌面是悬停、手机是长按（见 boardApp 的 pointerdown/pointermove）。
+            它 `pointer-events: none`（CSS），所以永远不挡棋盘操作。
+          */}
+          {inspectedUnit ? (
+            <div className="unit-card" data-testid="unit-detail">
+              <div className="unit-card-head">
+                <b data-testid="unit-detail-name">
+                  {DATA.units[inspectedUnit.type].glyph} {DATA.units[inspectedUnit.type].name}
+                </b>
+                <span className="muted small">
+                  {inspectedUnit.owner === view.selfId ? '我方' : nameOf(view, inspectedUnit.owner)}
+                </span>
+              </div>
+              <div className="unit-card-row">
+                <span data-testid="unit-detail-hp">
+                  HP {inspectedUnit.hp}/{DATA.units[inspectedUnit.type].hp}
+                </span>
+                <span className="hp-bar">
+                  <i
+                    style={{
+                      width:
+                        Math.max(0, Math.min(100, (inspectedUnit.hp / DATA.units[inspectedUnit.type].hp) * 100)) +
+                        '%',
+                    }}
+                  />
+                </span>
+              </div>
+              <p className="muted small">
+                移动 {DATA.units[inspectedUnit.type].move}（
+                {MOVE_TYPE_LABEL[DATA.units[inspectedUnit.type].moveType]}） · 射程{' '}
+                {rangeLabel(DATA.units[inspectedUnit.type])} ·{' '}
+                {attackKindLabel(DATA.units[inspectedUnit.type].attack)} ·{' '}
+                {DATA.units[inspectedUnit.type].counter ? '可反击' : '不反击'} · 造价{' '}
+                {DATA.units[inspectedUnit.type].cost}
+              </p>
+              <p className="muted small" data-testid="unit-detail-state">
+                {inspectedUnit.acted
+                  ? '本回合已行动'
+                  : inspectedUnit.moved
+                    ? '本回合已移动，还能攻击'
+                    : '本回合还没动'}
+                {inspectedUnit.capture
+                  ? ` · 正在占领据点（已累计 ${inspectedUnit.capture.points} 点）`
+                  : ''}
+              </p>
+            </div>
+          ) : null}
+        </div>
 
         <aside className="game-panel">
           {isDeploy ? (

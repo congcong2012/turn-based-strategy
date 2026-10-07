@@ -264,6 +264,8 @@ export function createPveSession(options: PveSessionOptions): PveSession {
       mapId: match.mapId,
       // 单人练习的对手本来就是 AI（它们直接在 match.seatIds 里），不存在"补位"概念
       aiSlotCount: 0,
+      // 单人练习的对手本来就是 AI，没有"按房间配 AI 档"这回事（难度在 config.difficulty 里）
+      aiDifficulty: config.difficulty,
       spectating: false,
       passwordEnabled: false,
       connection,

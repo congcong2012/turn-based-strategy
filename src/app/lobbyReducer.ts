@@ -1,8 +1,16 @@
 /** 房主端权威房间名单的归约函数（纯函数，可单测） */
 
 import type { LobbyPlayer, LobbySnapshot, Phase } from '../net/types'
+import type { Difficulty } from '../ai'
+import { DEEP_DIFFICULTY_MAX_PLAYERS, resolveDifficulty } from '../ai'
 
 export const MAX_PLAYERS = 4
+
+/**
+ * 替真人行动的 AI（AI 补位 + 掉线托管）默认用哪一档：「普通」。
+ * 不掉线的人既不该被更强的 AI 惩罚，也不该被白送 —— 房主可在大厅改。
+ */
+export const DEFAULT_AI_DIFFICULTY: Difficulty = 'normal'
 
 export function createLobby(roomCode: string, hostId: string, phase: Phase = 'LOBBY'): LobbySnapshot {
   return recompute({
@@ -18,6 +26,7 @@ export function createLobby(roomCode: string, hostId: string, phase: Phase = 'LO
      * 0 = 不补位；> 0 时不足的部分由 AI 坐（例如 2 人房想打四战之地 → 设 4，补 2 个 AI）。
      */
     aiSlotCount: 0,
+    aiDifficulty: DEFAULT_AI_DIFFICULTY,
     rev: 0,
   })
 }
@@ -35,7 +44,33 @@ export function setMapId(lobby: LobbySnapshot, mapId: string | null): LobbySnaps
  */
 export function setAiSlotCount(lobby: LobbySnapshot, count: number): LobbySnapshot {
   const next = count <= 0 ? 0 : Math.min(MAX_PLAYERS, Math.max(2, Math.floor(count)))
-  return { ...lobby, aiSlotCount: next }
+  return resolveLobbyAiDifficulty({ ...lobby, aiSlotCount: next })
+}
+
+/** 房主选"替真人行动的 AI 用哪一档"（AI 补位 + 掉线托管共用） */
+export function setAiDifficulty(lobby: LobbySnapshot, difficulty: Difficulty): LobbySnapshot {
+  return resolveLobbyAiDifficulty({ ...lobby, aiDifficulty: difficulty })
+}
+
+/**
+ * 把大厅里的 AI 档收敛到**本局实际可用**的档。
+ *
+ * 本局共几方 = `aiSlotCount > 0` 时按它算，否则按"真人数"算（不补位时就是真人对局）。
+ * 唯一会被收敛的是「深推演」：它只在两人局成立（规则见 `src/ai/profile.ts`）。
+ *
+ * ⚠️ 这里只是**大厅侧**的收敛（玩家加进来/退出会改变人数，所以每次改设置都重算一次）；
+ * 真正开局时 `roomSession` 还会按**实际**玩家数再收敛一次，两道保险。
+ */
+export function resolveLobbyAiDifficulty(lobby: LobbySnapshot): LobbySnapshot {
+  const total = lobby.aiSlotCount > 0 ? lobby.aiSlotCount : connectedCount(lobby)
+  const next = resolveDifficulty(lobby.aiDifficulty, total)
+  return next === lobby.aiDifficulty ? lobby : { ...lobby, aiDifficulty: next }
+}
+
+/** 「深推演」在本大厅当前设定下是否可选（UI 用它决定禁用与说明） */
+export function lobbyAllowsDeepAi(lobby: LobbySnapshot): boolean {
+  const total = lobby.aiSlotCount > 0 ? lobby.aiSlotCount : connectedCount(lobby)
+  return total <= DEEP_DIFFICULTY_MAX_PLAYERS
 }
 
 export function connectedCount(lobby: LobbySnapshot): number {

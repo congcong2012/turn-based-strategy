@@ -1,7 +1,7 @@
 {
   "name": "ancient-tactics",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.5.0",
   "type": "module",
   "description": "可联机回合制战略游戏（古代战棋）MVP",
   "scripts": {
@@ -13,6 +13,7 @@
     "bench:ai": "rolldown scripts/ai-bench.ts --format esm --platform node --file node_modules/.cache/ai-bench.mjs && node node_modules/.cache/ai-bench.mjs",
     "test:watch": "vitest",
     "e2e": "playwright test",
+    "e2e:all": "node scripts/e2e-all.mjs",
     "e2e:local": "playwright test --project=local",
     "e2e:p2p": "playwright test --project=p2p",
     "e2e:preview": "playwright test --project=preview",

@@ -304,3 +304,79 @@ test.describe('对局（本地传输）', () => {
     expect(spawned && { x: spawned.x, y: spawned.y }).toEqual({ x: 6, y: 2 })
   })
 })
+
+/**
+ * ★ 回归专项：Pixi 的**全局 batch 池**污染。
+ *
+ * 背景（2026-10-07 排查）：棋盘偶发报
+ *   `[board] 渲染这一帧失败，已跳过：TypeError: Cannot read properties of null (reading 'clear')`
+ * 且**出现在活跃对局里**（不只是页面卸载时）。根因在 Pixi 内部：
+ *   - batch 池是模块级的 `batchPool`，**跨所有 renderer 共享**；
+ *   - `renderer.destroy(true)` 会触发 `GlobalResourceRegistry.release()`，
+ *     把池里**已借出、仍被别的 renderer 持有**的 Batch 也一并 `destroy()`（`batch.textures = null`）；
+ *   - 它们随后被归还回池，下一次 `getBatchFromPool()` 取到就崩在 `Batcher.break()` 的
+ *     `batch.textures.clear()` —— 报错文本完全吻合。
+ *
+ * 所以 `boardApp` 销毁时必须传 `{ removeView: true }` 而**不是** `true`
+ * （见 `src/render/boardApp.ts` 的 `destroy()` 注释）。
+ *
+ * 本用例直接驱动批池、不经过 Application/render 的时序，因此是**确定性**的
+ * —— 既是根因的证据，也是"谁把销毁参数改回 true 就红"的哨兵。
+ */
+test.describe('棋盘渲染（Pixi 全局 batch 池）', () => {
+  test('★ 回归：release() 会毒化全局 batch 池，不调它则另一个 renderer 照常渲染', async ({ page }) => {
+    await page.goto('/')
+
+    const result = await page.evaluate(async () => {
+      const url = '/@id/pixi.js'
+      const { Batcher, GlobalResourceRegistry } = await import(/* @vite-ignore */ url)
+
+      /** 造一个最小可用的批处理器：packXxx 全是纯写入，本用例只关心池的归属关系 */
+      const makeBatcher = () => {
+        const b = new Batcher({ maxTextures: 2, attributesInitialSize: 4, indicesInitialSize: 6 })
+        b.vertexSize = 6
+        b.packAttributes = () => {}
+        b.packQuadAttributes = () => {}
+        b.packIndex = () => {}
+        return b
+      }
+      const element = () => ({
+        indexSize: 6,
+        attributeSize: 1,
+        blendMode: 'normal',
+        topology: 'triangle-strip',
+        texture: { _source: { uid: 1 } },
+      })
+      const instructionSet = () => ({ add() {} })
+
+      /** 走三帧：第 2 帧 begin() 会把上一帧的 batch 归还进池、break() 再借出来
+       *  ⇒ 池数组里留下"已借出但仍有引用"的条目，正是被 release() 误伤的靶子 */
+      const run = (release: boolean): string[] => {
+        const live = makeBatcher()
+        live.begin()
+        live.add(element())
+        live.break(instructionSet())
+        live.begin()
+        live.add(element())
+        live.break(instructionSet())
+        if (release) GlobalResourceRegistry.release()
+        try {
+          live.begin()
+          live.add(element())
+          live.break(instructionSet())
+          return []
+        } catch (err) {
+          return [String((err as Error)?.message ?? err)]
+        }
+      }
+
+      return { withRelease: run(true), withoutRelease: run(false) }
+    })
+
+    // 我们采用的销毁方式（不触发全局释放）⇒ 必须毫无问题
+    expect(result.withoutRelease).toEqual([])
+    // 反证：`destroy(true)` 的行为（触发 release()）确实会把活着的 renderer 搞崩
+    expect(result.withRelease).toHaveLength(1)
+    expect(result.withRelease[0]).toContain("reading 'clear'")
+  })
+})

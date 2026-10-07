@@ -156,6 +156,21 @@ button.danger { background: #33241f; border-color: #5a3a31; }
 .game-body { flex: 1; display: flex; min-height: 0; }
 .board-host { flex: 1; min-width: 0; position: relative; }
 .board-host canvas { display: block; width: 100%; height: 100%; }
+
+/* 棋盘 + 单位详情卡（悬停 / 长按查看）：卡片浮在棋盘左下角。
+   `pointer-events: none` 是关键 —— 它永远不挡棋盘上的点击与拖拽。 */
+.board-area { flex: 1; min-width: 0; position: relative; display: flex; }
+.unit-card {
+  position: absolute; left: 8px; bottom: 8px;
+  max-width: min(280px, calc(100% - 16px));
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: rgba(30, 26, 22, 0.94); pointer-events: none; font-size: 12px;
+}
+.unit-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.unit-card-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.unit-card p { margin: 4px 0 0; font-size: 12px; }
+.hp-bar { flex: 1; height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.hp-bar i { display: block; height: 100%; background: var(--gold); }
 .game-panel {
   width: 280px; flex: 0 0 280px; border-left: 1px solid var(--line); background: var(--panel);
   padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
@@ -204,6 +219,8 @@ button.block { width: 100%; margin-bottom: 8px; }
   .game-body { flex-direction: column; }
   .game-panel { width: auto; flex: 0 0 auto; border-left: none; border-top: 1px solid var(--line); }
   .board-host { min-height: 46vh; }
+  /* 手机上棋盘是纵向排布的一块，详情卡要贴着它 —— 高度约束得给在外层容器上 */
+  .board-area { min-height: 46vh; }
 }
 .pause-banner {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;

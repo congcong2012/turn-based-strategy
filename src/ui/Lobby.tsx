@@ -13,6 +13,9 @@ import { ConnectionHelp } from './ConnectionHelp'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { ManualSdpPanel } from './ManualSdpPanel'
 import { PlayerList } from './PlayerList'
+import { difficultyOptionLabel } from './difficultyCopy'
+import { DEEP_DIFFICULTY, PLAYABLE_DIFFICULTIES, isDifficultyUsable } from '../ai'
+import type { Difficulty } from '../ai'
 
 export interface LobbyProps {
   view: RoomView
@@ -55,6 +58,15 @@ export function Lobby({
    */
   const mapOptions = useMemo(() => listLobbyMaps(), [])
   const selectedMap = mapOptions.find((m) => m.id === view.mapId)
+
+  /**
+   * 本局预计几方：房主选了 AI 补位就按那个数，否则按"真人（非观战、在线）数"。
+   * 与 `lobbyReducer` 的口径一致（那边是权威值，这里只是给 UI 判断"深推演能不能选"）。
+   */
+  const expectedTotal =
+    view.aiSlotCount > 0 ? view.aiSlotCount : view.players.filter((p) => p.connected && !p.spectator).length
+  /** 「深推演」只在两人局可选 —— 规则本身在 AI 层（`isDifficultyUsable`） */
+  const deepAllowed = isDifficultyUsable(DEEP_DIFFICULTY, expectedTotal)
   const [nickname, setNickname] = useState(identity.nickname)
   const [code, setCode] = useState(initialRoomCode ?? '')
   const [password, setPassword] = useState(initialRoomKey ?? '')
@@ -410,11 +422,50 @@ export function Lobby({
                 </span>
               )}
             </label>
+
+            {/*
+              AI 用哪一档：**AI 补位 + 掉线托管共用**这个设置，所以即使「不补位」也有意义
+              （对局中有人掉线、房主点「AI 代打」时用的就是它）。
+            */}
+            <label className="field inline">
+              <span>AI 难度</span>
+              {view.isHost ? (
+                <select
+                  data-testid="ai-difficulty-select"
+                  value={view.aiDifficulty}
+                  onChange={(event) => actions.setAiDifficulty(event.target.value as Difficulty)}
+                >
+                  {PLAYABLE_DIFFICULTIES.map((d) => (
+                    <option key={d} value={d} disabled={!isDifficultyUsable(d, expectedTotal)}>
+                      {difficultyOptionLabel(d)}
+                      {isDifficultyUsable(d, expectedTotal) ? '' : '（仅两人局）'}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="muted small" data-testid="ai-difficulty-label">
+                  {difficultyOptionLabel(view.aiDifficulty)}
+                </span>
+              )}
+            </label>
+
             {view.isHost && view.aiSlotCount > 0 ? (
               <p className="muted small" data-testid="ai-slots-hint">
                 当前 {view.players.filter((p) => p.connected).length} 名真人 →
                 开局会补 {Math.max(0, view.aiSlotCount - view.players.filter((p) => p.connected).length)} 个 AI。
-                AI 用「普通」档、与真人同规则（不加资源）。
+                AI 用「{difficultyOptionLabel(view.aiDifficulty)}」、与真人同规则（不加资源）。
+              </p>
+            ) : null}
+            {view.isHost && !deepAllowed ? (
+              <p className="muted small" data-testid="ai-deep-scope-hint">
+                「{difficultyOptionLabel(DEEP_DIFFICULTY)}」暂时只在<b>两人局</b>可选：
+                它要"把对手的整个回合推演一遍"，而 3 人以上是多方混战，这个前提不成立
+                （会退回同档的「快棋」，选它反而名不副实）。
+              </p>
+            ) : null}
+            {view.isHost ? (
+              <p className="muted small" data-testid="ai-difficulty-hint">
+                这一档也用于对局中<b>掉线托管</b>（房主点「AI 代打」时跑的档）。
               </p>
             ) : null}
 

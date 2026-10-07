@@ -14,20 +14,33 @@ export interface FocusRequest {
 export interface BoardCanvasProps {
   view: BoardView
   onTileClick: (x: number, y: number) => void
+  /**
+   * 指针正在看哪个格子（桌面悬停 / 触摸长按）；`null` = 离开了棋盘或已收起。
+   * 上层用它决定要不要弹单位详情卡。
+   */
+  onInspect?: (tile: { x: number; y: number } | null) => void
   /** 把镜头对准某个区域（「定位」按钮 / 进入部署阶段自动聚焦） */
   focus?: FocusRequest | null
   /** DEV/E2E：把投影函数暴露出去，便于自动化点中具体格子（生产仅 ?debug=1 时开启） */
   exposeDebug?: boolean
 }
 
-export function BoardCanvas({ view, onTileClick, focus, exposeDebug = false }: BoardCanvasProps) {
+export function BoardCanvas({
+  view,
+  onTileClick,
+  onInspect,
+  focus,
+  exposeDebug = false,
+}: BoardCanvasProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const appRef = useRef<BoardApp | null>(null)
   const handlerRef = useRef(onTileClick)
+  const inspectRef = useRef(onInspect)
   const viewRef = useRef(view)
   const focusRef = useRef<FocusRequest | null>(focus ?? null)
   const [error, setError] = useState<string | null>(null)
   handlerRef.current = onTileClick
+  inspectRef.current = onInspect
   viewRef.current = view
   focusRef.current = focus ?? null
 
@@ -45,6 +58,7 @@ export function BoardCanvas({ view, onTileClick, focus, exposeDebug = false }: B
           return
         }
         app.setTileHandler((x, y) => handlerRef.current(x, y))
+        app.setInspectHandler((tile) => inspectRef.current?.(tile))
         app.setView(viewRef.current)
         // 棋盘就绪后若已有聚焦请求，立即应用（例如进入部署阶段）
         const pending = focusRef.current
@@ -54,6 +68,8 @@ export function BoardCanvas({ view, onTileClick, focus, exposeDebug = false }: B
             project: (x: number, y: number) => app.project(x, y),
             scale: () => app.getScale(),
             camera: () => app.getCamera(),
+            // 渲染失败累计次数：E2E 断言为 0（不为 0 说明棋盘渲染出过真 bug）
+            renderErrors: () => app.getRenderErrorCount(),
           }
         }
       })

@@ -13,8 +13,16 @@ import type { MapDef } from '../game/data'
 import type { Page } from '../app/route'
 import type { PveConfig } from '../app/pveSession'
 import { listPveMaps } from '../app/mapStore'
-import { PLAYABLE_DIFFICULTIES } from '../ai'
+import { DEEP_DIFFICULTY, isDifficultyUsable } from '../ai'
 import type { PlayableDifficulty } from '../ai'
+import {
+  DEFAULT_HARD_DIFFICULTY,
+  HARD_MODE_OPTIONS,
+  TIER_COPY,
+  TIERS,
+  modeLabel,
+} from './difficultyCopy'
+import type { TierId } from './difficultyCopy'
 import { AppFooter } from './AppFooter'
 
 export interface PveSetupProps {
@@ -36,105 +44,9 @@ function zoneLabel(map: MapDef, index: number): string {
   return '中部'
 }
 
-/**
- * 难度分两层：**三档难度**（简单 / 普通 / 困难），其中「困难」再挂**两种算法模式**。
- *
- * 为什么把原来的「困难」「极难」并成一组：这两者共用**同一套评估器**
- * （v2 开关逐字相同、评估器 v3 全关），唯一区别是**规划机制** ——
- *   - 快棋：固定深度的一步前瞻（挑 12 个最有希望的走法，逐个深克隆局面精确算收益）；
- *   - 深推演：回合级 rollout（替我把这一回合走完 → 把对手整个回合推演一遍 → 回头定第一步）。
- * 所以它们本来就是"同一个难度的两种算法"；并列成两档，玩家会误以为差别在"档位强度"上。
- *
- * 文案规则（AGENTS.md）：写"它会做什么"，而不是"它有多强"；模式还要**明确标注算法**。
- */
-type TierId = 'easy' | 'normal' | 'hard'
-/** 「困难」档下的两种算法模式 */
-type HardModeId = 'lookahead' | 'rollout'
+// 难度文案与界面归属在 `./difficultyCopy`（**与联机大厅共用同一份**，避免两处各写一套而走样）。
+// 这里只负责渲染：三档难度卡 + 选中「困难」时展开的两种算法模式。
 
-/**
- * 每个**可玩难度档**归到哪一档、叫什么名字。
- *
- * 这张表按 `PLAYABLE_DIFFICULTIES` 穷尽（`Record<PlayableDifficulty, ...>`）：
- * 将来某个档达标要上线时，只改 AI 层那张表，这里会因为缺键而**编译报错**，逼着补文案 —— 不会漏。
- * 档位顺序、模式列表都由它派生（见下），所以界面永远与"AI 层开放的档"一致。
- */
-const PLACEMENT: Record<
-  PlayableDifficulty,
-  { tier: TierId; mode?: HardModeId; label: string; hint: string }
-> = {
-  easy: {
-    tier: 'easy',
-    label: '简单',
-    hint: '出手随意，偶尔干脆不动；部署也随便摆',
-  },
-  normal: {
-    tier: 'normal',
-    label: '普通',
-    hint: '会抢据点、挑性价比高的架打、集火残血；关键一步会算一下后果',
-  },
-  hard: {
-    tier: 'hard',
-    mode: 'lookahead',
-    label: '快棋',
-    hint: '一步前瞻 —— 挑出 12 个最有希望的走法，逐个摆上去、精确算出收益再选最好的。基本秒回',
-  },
-  oracle: {
-    tier: 'hard',
-    mode: 'rollout',
-    label: '深推演',
-    hint: '回合推演 —— 先替我走完这一回合，再把对手的整个回合推演一遍（他每步也按「快棋」挑棋），然后回头定第一步。平时几秒，后期大军团偶尔要等一两分钟',
-  },
-}
-
-/** 玩家看到的难度档顺序：由 `PLACEMENT` 派生，声明顺序即展示顺序（简单 → 普通 → 困难） */
-const TIERS: TierId[] = [...new Set(PLAYABLE_DIFFICULTIES.map((d) => PLACEMENT[d].tier))]
-
-/**
- * 三档难度各自的文案。
- *
- * 简单 / 普通这两档**直接复用 `PLACEMENT` 里那一档自己的文案**（同一份，不再抄一遍）；
- * 「困难」档要另写一句 —— 它自己的说明是"看得更远…"，而它的两种算法模式各有各的文案
- * （见 `HARD_MODE_OPTIONS`），两者不是一回事。
- */
-const TIER_COPY: Record<TierId, { label: string; hint: string }> = {
-  easy: { label: PLACEMENT.easy.label, hint: PLACEMENT.easy.hint },
-  normal: { label: PLACEMENT.normal.label, hint: PLACEMENT.normal.hint },
-  hard: {
-    label: '困难',
-    hint: '看得更远；会经营军费、回防被抢的据点、给残血单位回补给，临近回合上限还会算分',
-  },
-}
-
-interface HardModeOption {
-  /** 存档里写的内部难度 id */
-  difficulty: PlayableDifficulty
-  /** 模式标识（按钮 testid 用它，比难度 id 更贴近玩家看到的字） */
-  mode: HardModeId
-  label: string
-  hint: string
-}
-
-/** 「困难」档下的两种算法模式：由 `PLACEMENT` 里归到「困难」的档派生，顺序同源 */
-const HARD_MODE_OPTIONS: HardModeOption[] = PLAYABLE_DIFFICULTIES.flatMap((difficulty) => {
-  const entry = PLACEMENT[difficulty]
-  if (entry.tier !== 'hard' || !entry.mode) return []
-  return [{ difficulty, mode: entry.mode, label: entry.label, hint: entry.hint }]
-})
-
-/** 模式 → 展示名：文案里互相引用时用它，避免名字在多处硬编码 */
-function modeLabel(mode: HardModeId): string {
-  return HARD_MODE_OPTIONS.find((o) => o.mode === mode)?.label ?? mode
-}
-
-/** 兜底算法模式（「快棋」）：深推演在多人局不可用时落回它 */
-const DEFAULT_HARD_DIFFICULTY: PlayableDifficulty =
-  HARD_MODE_OPTIONS.find((o) => o.mode === 'lookahead')?.difficulty ?? 'hard'
-
-/**
- * 「深推演」对应的档位。它在多人局不可用（见 `deepUnavailable`）；
- * 万一将来这张表里没有这个模式，下面的比较恒为 false —— 等价于"不存在深推演"，不会误判。
- */
-const DEEP_HARD_DIFFICULTY = HARD_MODE_OPTIONS.find((o) => o.mode === 'rollout')?.difficulty
 
 export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps) {
   const [opponents, setOpponents] = useState(1)
@@ -148,15 +60,16 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
   const total = opponents + 1
 
   /**
-   * 「深推演」只在两人局成立。
+   * 「深推演」只在两人局成立 —— 规则本身在 AI 层（`src/ai/profile.ts` 的
+   * `isDifficultyUsable`），单人练习与联机大厅共用同一条，别在这里另写一份。
    *
    * 它的机制是"我走完这回合 → **对手**走完这回合"再评估，这个前提在 3–4 人（多方博弈、非零和）
    * 里不成立，内核会保守回退到一步前瞻 —— 也就是「快棋」的算法。与其让玩家选一个"看起来更狠、
    * 其实一样"的模式，不如直接禁用并说明原因；玩家先选了深推演再把对手数调上去，这里会自动落回「快棋」。
    */
-  const deepUnavailable = total > 2
+  const deepUnavailable = !isDifficultyUsable(DEEP_DIFFICULTY, total)
   const effectiveHardDifficulty: PlayableDifficulty =
-    deepUnavailable && hardDifficulty === DEEP_HARD_DIFFICULTY ? DEFAULT_HARD_DIFFICULTY : hardDifficulty
+    deepUnavailable && hardDifficulty === DEEP_DIFFICULTY ? DEFAULT_HARD_DIFFICULTY : hardDifficulty
   /** 真正写进配置、交给会话的难度档 */
   const effectiveDifficulty: PlayableDifficulty = tier === 'hard' ? effectiveHardDifficulty : tier
   // 可选地图：内置 + 自制，且席位够用（例如 2 人图不会出现在 4 人局里）
@@ -304,7 +217,7 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
             </p>
             <div className="unit-picker">
               {HARD_MODE_OPTIONS.map((option) => {
-                const disabled = option.difficulty === DEEP_HARD_DIFFICULTY && deepUnavailable
+                const disabled = option.difficulty === DEEP_DIFFICULTY && deepUnavailable
                 return (
                   <button
                     key={option.difficulty}

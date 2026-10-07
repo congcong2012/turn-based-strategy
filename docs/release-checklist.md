@@ -34,8 +34,17 @@ npm run build          # 期望：0 error；记录主包与 Pixi 分包体积
 
 ## 3. 端到端回归（5 条轨道，全绿才算过）
 
+**推荐：一条命令跑完**（脚本自己起 5173/4173、逐轨套超时、汇总结果、收尾清进程）：
+
 ```bash
-npx playwright test --project=local     # 34 passed（约 3 分钟，不需要公网）
+npm run e2e:all                      # local / mobile / preview / p2p / manual
+npm run e2e:all -- --tracks=local,preview
+```
+
+逐轨手工跑也可以（等于脚本内部做的事）：
+
+```bash
+npx playwright test --project=local     # 约 3 分钟，不需要公网
 npx playwright test --project=mobile    # 2 passed（Pixel 5 视口 + 触摸）
 npx playwright test --project=preview   # 4 passed（dist 产物 + 子路径）
 npx playwright test --project=p2p       # 1 passed（真实 WebRTC + 公共信令，抖动可重试一次）
@@ -45,6 +54,15 @@ npx playwright test --project=manual    # 1 passed（手动直连 SDP 交换，�
 通过标准：**0 failed**。
 `p2p` 依赖公共信令、`manual` 依赖裸 WebRTC 打洞，两者都会受网络与机器负载影响：
 **偶发失败先单跑一次**（`--project=p2p` / `--project=manual`）确认，仍失败才当缺陷处理。
+
+### ★ 本机跑 E2E 的两个坑（脚本已经替你兜住，手工跑时要自己注意）
+
+1. **必须先自己把 5173 与 4173 都起起来**（都带 `CODEBUDDY_SAFE_DELETE_ENABLED=0`）：
+   `playwright.config.ts` 的 webServer 是**顶层数组**，连 `--project=local` 也要求 4173 就绪；
+   而本机代理会挡住 Playwright 自起的探测（表现为**挂死不报错**）。
+2. **每轨外面套 `timeout`，输出写文件、绝不接 `| tail`**：用例全绿后进程**不会退出**，
+   会一直挂着；`| tail` 还会把输出全缓冲 ⇒ 把"正常在跑"误判成"卡死"。
+   **判定只看 `^  ok` 的条数**（超时杀进程会把 `N passed` 那行写花，别信它）。
 
 > **CI 已经跑掉其中三条**：部署流水线的 `e2e` job 会跑 `local` + `mobile` + `preview` 的离线部分
 > （`npm run e2e:ci`，`--grep-invert @network`）并**阻塞部署**；preview 里依赖公共信令的 2 条
@@ -74,7 +92,7 @@ node scripts/serve-subpath.mjs turn-based-strategy 4180
 | 6 | 房主设密码建房 | 房内出现「已加密」徽章与密码提示 |
 | 7 | 「复制邀请链接」 | 链接形如 `...?room=ABC23D&key=密码`；好友点开时房间码**与密码**都已填好 |
 | 8 | 密码不一致 | 两边都能进房但互相看不见，页面**不报错**；提示语说明了这一点（不是 bug） |
-| 9 | 开局 | 部署（预算 4000 / 最多 4 单位）→ 行动 → 结束回合，双方状态一致 |
+| 9 | 开局 | 部署（预算 4000 / 最多 4 单位）→ 行动 → 结束回合，双方状态一致；**把鼠标停在任一部队上，左下角浮出单位详情卡**（兵种/归属/HP 血条/移动·射程·攻击方式·造价/本回合行动状态），移开即收起 —— 手机上是**长按 450ms** 弹卡片，且长按之后紧接着的点按仍照常生效 |
 | 10 | 刷新页面 | 联机：自动回到原房间/对局（加密房也不会因为丢密码失联）；**单人：接着上一局继续打，且回合数与部队不变**（只有点「退出对局」才会清档） |
 | 11 | 房主刷新 | 客户端显示「房主已断线，游戏暂停」，房主回来后恢复整局 |
 | 12 | 「诊断信息」 | 折叠面板可复制，内容含**版本号**、房间码、密码状态、连接状态、最近错误 |

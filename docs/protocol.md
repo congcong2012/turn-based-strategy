@@ -67,17 +67,28 @@ joinRoom(config)                     // config.password 参与 genKey（SDP 派�
 type LobbyPlayer = {
   playerId: string; nickname: string
   ready: boolean; isHost: boolean; connected: boolean
+  spectator?: boolean  // 观战者：不占席位、只读（可忽略）
 }
 type LobbySnapshot = {
   roomCode: string
   phase: 'LOBBY' | 'DEPLOY' | 'PLAYING' | 'PAUSED' | 'GAME_OVER'
   hostId: string
   players: LobbyPlayer[]
-  maxPlayers: number   // M1 = 2
+  maxPlayers: number   // 4（= MAX_PLAYERS）
   canStart: boolean    // 房主计算：≥2 名在线玩家且全部已准备
+  mapId: string | null // 房主选图；null = 按人数自动挑
+  aiSlotCount: number  // AI 补位：本局共几个席位（含真人；0 = 不补位）
+  aiDifficulty: string // 替真人行动的 AI 用哪一档（AI 补位 + 掉线托管共用）
   rev: number          // 单调递增；客户端只接受更新的快照
 }
 ```
+
+> **`aiDifficulty`** 存的是**内部难度 id**：`easy` / `normal` / `hard`（困难·快棋）/
+> `oracle`（困难·深推演）。默认 `normal` —— 不掉线的人既不该被更强的 AI 惩罚，也不该被白送。
+> ⚠️ **`oracle` 只在两人局成立**（它推演的是"那一个"对手的整个回合）：
+> 大厅侧（`lobbyReducer.resolveLobbyAiDifficulty`）与开局后（`roomSession.currentAiDifficulty`）
+> **各收敛一次**，多人局里它会落回 `hard`。这条规则本身在 `src/ai/profile.ts`（`isDifficultyUsable`），
+> 单人练习与联机共用同一份，别在两处各写一套。
 
 ## 3. 时序
 
