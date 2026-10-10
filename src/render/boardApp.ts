@@ -278,6 +278,10 @@ export class BoardApp {
     this.clearLongPress()
     if (this.rafId !== null) cancelAnimationFrame(this.rafId)
     this.rafId = null
+    // 这一发也一起取消：否则销毁后它仍会排到队列里跑一次空转（见 scheduleRender 注释）
+    if (this.pendingRenderId !== null) cancelAnimationFrame(this.pendingRenderId)
+    this.pendingRenderId = null
+    this.renderScheduled = false
     if (this.initialized) this.app.destroy({ removeView: true })
   }
 
@@ -462,7 +466,12 @@ export class BoardApp {
     if (this.destroyed || !this.initialized) return
     if (this.renderScheduled) return
     this.renderScheduled = true
-    requestAnimationFrame(() => {
+    // ★ 存下 rAF id：`destroy()` 要能把它取消掉。
+    //   这里和 `ensureAnimationLoop` 的 `rafId` 是**两条独立的 rAF 链**（一条画"状态变化后的第一帧"、
+    //   一条跑动画循环），必须分开记；以前不记 id，销毁后这一帧仍会排队到队列里，
+    //   只能靠 `render()` 开头的 `destroyed` 守卫兜住 —— 不崩，但白白多跑一趟。
+    this.pendingRenderId = requestAnimationFrame(() => {
+      this.pendingRenderId = null
       this.renderScheduled = false
       this.render()
     })
@@ -624,6 +633,8 @@ export class BoardApp {
   /** 渲染失败累计次数（见 render() 的 catch）。以前是个"只报一次"的布尔量，改计数以便断言 */
   private renderErrors = 0
   private renderScheduled = false
+  /** `scheduleRender()` 那一发 rAF 的 id（与 `rafId` 动画循环分开记，见该方法注释） */
+  private pendingRenderId: number | null = null
 
   /** 文本对象池：复用 Text，避免每次重绘都新建（Pixi 的 Text 会各自持有纹理） */
   private textAt(pool: 'capture' | 'floater', index: number, style: Record<string, unknown>): import('pixi.js').Text {
@@ -644,9 +655,13 @@ export class BoardApp {
     const view = this.view
     const PIXI = this.pixi
     if (!view || !PIXI) return
-    // 已销毁就不要再画：页面关闭/刷新时"销毁 Pixi"与"rAF 里在途的那一帧"会撞车，
-    // 表现为 `[board] 渲染这一帧失败：Cannot read properties of null (reading 'clear')`。
-    // 有 catch 兜底不至于崩，但每次 E2E 都会刷一屏日志、掩盖真正的问题。
+    // 已销毁就不要再画。这是**双保险**，不是唯一的防线：
+    //   ① `destroy()` 现在会主动 `cancelAnimationFrame` 掉动画循环（`rafId`）与
+    //      `scheduleRender()` 那一发（`pendingRenderId`）；
+    //   ② 但浏览器仍可能有一帧已经派发到队列里，所以这里再兜一次。
+    // （历史：2026-10-07 之前的真 bug 是 `app.destroy(true)` 清空了**全局共享的 batch 池**，
+    //   报错同为 `Cannot read properties of null (reading 'clear')`，根因与这里无关，
+    //   详见 `destroy()` 上方注释。）
     if (this.destroyed) return
     if (!this.terrainG || !this.overlayG || !this.zoneLabel) return // 初始化未完成时的防御
     const { state } = view

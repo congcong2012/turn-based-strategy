@@ -591,4 +591,52 @@ test.describe('单人练习（PVE）', () => {
       )
       .toBe(0)
   })
+
+  test('★ 完整战斗日志：显示整局战报（含部署），可搜索、可关闭', async ({ page }) => {
+    await openPveSetup(page)
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+
+    // 造点战报：部署两个兵 + 结束部署
+    await page.getByTestId('deploy-sword').click()
+    await clickTile(page, 2, 0)
+    await page.getByTestId('deploy-sword').click()
+    await clickTile(page, 3, 0)
+    await page.getByTestId('deploy-done').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('行动', { timeout: 15_000 })
+
+    // 侧面小列表里有「最近战报」
+    await expect(page.getByTestId('event-log')).toBeVisible()
+
+    // 打开完整日志
+    await page.getByTestId('battle-log-button').click()
+    const panel = page.getByTestId('battle-log')
+    await expect(panel).toBeVisible()
+
+    // 内容里必须有部署阶段的战报（这正是"完整"的意义：小列表只显示最近 12 条，
+    // 而这里能看到从第 0 回合开始的全部）
+    const list = page.getByTestId('battle-log-list')
+    await expect(list).toContainText('部署')
+
+    // 计数条给出"共 N 个回合 · M 条"
+    await expect(page.getByTestId('battle-log-count')).toContainText('条')
+
+    // 搜索能过滤（搜一个必然不存在的词 → 变成"没有匹配"）
+    await page.getByTestId('battle-log-search').fill('这个词不可能出现在战报里')
+    await expect(list).toContainText('没有匹配的战报')
+
+    // 清空搜索后内容回来
+    await page.getByTestId('battle-log-search').fill('')
+    await expect(list).toContainText('部署')
+
+    // 关闭：点「关闭」按钮
+    await page.getByTestId('battle-log-close').click()
+    await expect(panel).toHaveCount(0)
+
+    // 再打开，这次按 Esc 关（两种关法都要能用）
+    await page.getByTestId('battle-log-button').click()
+    await expect(panel).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(panel).toHaveCount(0)
+  })
 })

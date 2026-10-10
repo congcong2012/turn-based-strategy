@@ -95,6 +95,8 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     takeoverPlayerId: null,
     offlinePlayers: [],
     log: [],
+    rounds: [],
+    fullLog: [],
     events: [],
     connection: 'idle',
     transportStatus: 'idle',

@@ -31,7 +31,7 @@ export function isUserMapId(id: string): boolean {
 }
 
 export function isBuiltinMapId(id: string): boolean {
-  return Object.prototype.hasOwnProperty.call(BUILTIN_MAPS, id)
+  return Object.hasOwn(BUILTIN_MAPS, id)
 }
 
 /**

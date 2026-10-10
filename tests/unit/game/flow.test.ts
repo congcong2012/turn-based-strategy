@@ -95,7 +95,7 @@ describe('行动经济与校验', () => {
   })
 
   it('移动事件携带逐格路径（动画沿引擎算出的路径播放）', () => {
-    let s = playing()
+    const s = playing()
     const unit = s.units.find((u) => u.owner === P1)!
     const result = run(s, P1, { type: 'move', unitId: unit.id, x: 3, y: 6 }, data)
     expect(result.ok).toBe(true)
@@ -265,7 +265,7 @@ describe('占领与经济', () => {
   })
 
   it('经济与资金不足校验', () => {
-    let s = playing()
+    const s = playing()
     s.funds[P1] = 100
     expectCode(run(s, P1, { type: 'produce', buildingId: 'bk-A', unitType: 'sword' }, data), 'INSUFFICIENT_FUNDS')
     expectCode(run(s, P1, { type: 'produce', buildingId: 'bk-B', unitType: 'sword' }, data), 'BUILDING_NOT_OWNED')
@@ -347,7 +347,7 @@ describe('胜负条件（GDD 9）', () => {
 
 describe('startTurn 幂等与收入', () => {
   it('收入按据点归属累计', () => {
-    let s = playing()
+    const s = playing()
     const before = s.funds[P1]
     const next = startTurn(s, data)
     expect(next.state.funds[P1]).toBe(before + 1500)

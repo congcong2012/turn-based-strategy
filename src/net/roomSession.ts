@@ -44,7 +44,7 @@ import { applyCommand } from '../game/commands'
 import { defaultMapFor } from '../game/data'
 import { describeErrorCode } from '../game/errorText'
 import { appendJournal, emptyJournal } from '../game/journal'
-import type { Journal, LoggedEvent } from '../game/journal'
+import type { Journal, LoggedEvent, LogRound } from '../game/journal'
 import { createGame } from '../game/state'
 import type { Command, GameEvent, GameState } from '../game/types'
 import type {
@@ -149,8 +149,15 @@ export interface RoomView {
   takeoverPlayerId: PlayerId | null
   /** M3：掉线中的玩家（对局进行时保留席位） */
   offlinePlayers: PlayerId[]
-  /** M3：中文战报（最新在最后） */
+  /** M3：中文战报（最新在最后）。**滚动窗口**（最多 60 条），给屏幕边角的小列表用 */
   log: string[]
+  /**
+   * ★ 整局完整战报，按回合分组。给「完整战斗日志」面板用。
+   * 由房主权威维护并随 `state` 一起广播 ⇒ 中途加入 / 刷新后依然完整。
+   */
+  rounds: LogRound[]
+  /** ★ 整局完整战报（`rounds` 拍平后的同一份内容）。也用于给滚动窗口里的行算稳定的 key */
+  fullLog: string[]
   /** M5：最近的原始事件（带序号，供渲染层播动画与音效，保证只播一次） */
   events: LoggedEvent[]
 }
@@ -414,6 +421,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       takeoverPlayerId: takeover?.playerId ?? null,
       offlinePlayers: players.filter((p) => !p.connected).map((p) => p.playerId),
       log: journal.log,
+      rounds: journal.rounds,
+      fullLog: journal.fullLog,
       events: journal.events,
       connection: deriveConnection(),
       transportStatus: status,
@@ -453,7 +462,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
 
   function broadcastGame(events: GameEvent[] = []): void {
     if (!game || !isHost()) return
-    transport?.send({ t: 'game', from: selfId, state: game, events })
+    // 完整战报随状态一起走：它是"房主权威 + 全量"的，任何时刻加入的人都能拿到整局历史
+    transport?.send({ t: 'game', from: selfId, state: game, events, rounds: journal.rounds })
   }
 
   /** 房主：执行一条指令（本地或来自客户端的意图），并把结果广播出去 */
@@ -762,7 +772,9 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
           aiSlotCount = lobby.aiSlotCount
           aiDifficulty = lobby.aiDifficulty
           // 若对局已开始，补发完整快照（断线重连 / 中途加入）
-          if (game) transport?.send({ t: 'game', from: selfId, state: game }, peerId)
+          // ★ 连**完整战报**一起补发：这才是"刷新后还能回看整局"的关键 ——
+          //   只补 state 的话，客户端手上的战报是空的（它没经历过之前那些事件）
+          if (game) transport?.send({ t: 'game', from: selfId, state: game, rounds: journal.rounds }, peerId)
           else maybeRestoreGame()
           const known = hasPlayer(lobby, msg.from)
           // 观战者不占席位：房间满员时也放行（否则「满员也能观战」的承诺不成立）
@@ -795,6 +807,13 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       case 'game': {
         if (!isHost()) {
           if (msg.events && msg.events.length > 0) appendLog(msg.events, game, msg.state)
+          // ★ 完整战报以**房主发来的为准**（房主权威）。
+          //   自己 appendLog 攒出来的只覆盖"我连上之后"的事件，刷新/中途加入后一定是残的；
+          //   房主每次广播都带全量 rounds，覆盖即可 —— 两边不会打架（同一个累积器的同一个结果）。
+          if (msg.rounds) {
+            const fullLog = msg.rounds.flatMap((r) => r.lines)
+            journal = { ...journal, fullLog, rounds: msg.rounds }
+          }
           game = msg.state
           // 对局期间禁止主机迁移：客户端只等待房主回来，不接管（GDD 8.5）
           if (election) {
@@ -1174,7 +1193,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         targetSlots > 0
           ? '进入部署阶段：' + targetSlots + ' 个席位由 AI 补位，在己方部署区放置初始部队'
           : '进入部署阶段：在己方部署区放置初始部队'
-      transport?.send({ t: 'game', from: selfId, state: game })
+      transport?.send({ t: 'game', from: selfId, state: game, rounds: journal.rounds })
       broadcastLobby()
       emit()
     },

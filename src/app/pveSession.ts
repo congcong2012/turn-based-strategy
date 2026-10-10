@@ -17,8 +17,8 @@ import { applyCommand } from '../game/commands'
 import { describeErrorCode } from '../game/errorText'
 import { appendJournal, emptyJournal } from '../game/journal'
 import type { Journal } from '../game/journal'
-import { nextCommand, MAX_AI_STEPS } from '../ai'
-import type { Difficulty } from '../ai'
+import { nextCommand, nextCommandWith, MAX_AI_STEPS } from '../ai'
+import type { AiProfile, Difficulty } from '../ai'
 import { hashSeed, mulberry32 } from '../ai/rng'
 import type { AiTask } from '../ai/workerProtocol'
 import type { Command, GameState, PlayerId } from '../game/types'
@@ -177,6 +177,16 @@ export function createPveSession(options: PveSessionOptions): PveSession {
   /** 如果走 Worker，这里存着"在途的那次思考"，用来丢弃过期结果 */
   let pendingThink: Promise<Command> | null = null
 
+  /**
+   * 部署阶段被"AI 先行闸门"排队的人类指令 —— 等 AI 部署完再按序重放。
+   *
+   * 只在"部署阶段 + 异步 AI 思考在途"这个窗口里会被用到；
+   * 同步路径（默认主线程 AI）永远不会进这里，因此**改造前行为零变化**。
+   */
+  const deferredHumanCommands: Command[] = []
+  /** 防重入旗标：见 `drainDeferredHumanCommands` 的注释 */
+  let draining = false
+
   if (!options.config && !options.restore) {
     throw new Error('createPveSession：必须提供 config（新开一局）或 restore（从存档恢复）')
   }
@@ -281,6 +291,8 @@ export function createPveSession(options: PveSessionOptions): PveSession {
       takeoverPlayerId: null,
       offlinePlayers: [],
       log: journal.log,
+      rounds: journal.rounds,
+      fullLog: journal.fullLog,
       events: journal.events,
     }
   }
@@ -320,16 +332,102 @@ export function createPveSession(options: PveSessionOptions): PveSession {
     return true
   }
 
-  /** 部署阶段：把所有未确认的 AI 一次性部署完（不需要等待，界面直接刷新） */
+  /**
+   * 部署阶段：把所有未确认的 AI 依次部署完。
+   *
+   * ⚠️ **已改造为走 `think`（可能异步）** —— 因为 LLM 参谋在部署阶段也要给一次倾向。
+   *
+   * 两条路径，**同步那条与改造前逐字一致**：
+   *
+   * - **同步 `think`**（默认主线程实现）：保持原来的 `while` 循环语义 —— 一口气把所有
+   *   AI 席位部署完，循环内**不 emit**（调用方负责在末尾 emit）。这样"构造阶段不回调
+   *   onChange"等既有契约原样成立。
+   * - **异步 `think`**（Worker / LLM 参谋）：一次只推进一步，由 Promise 回调续推下一个席位。
+   *   途中把 `aiRunning` 置位，避免与 `stepAi` 的排程互相打架。
+   *
+   * 为什么异步时不能继续用 `while`：`while` 里拿到的是待定的 Promise，`apply` 无从下手；
+   * 且"发出请求即返回"意味着循环必须由回调驱动。
+   *
+   * 兜底：`think` 抛错时**退回默认实现**（主线程按难度直接算）——
+   * 部署阶段绝不能因为"参谋炸了"而把整局卡死；退回默认实现恰恰就是"没开参谋"的行为。
+   */
   function pumpDeploy(): void {
+    if (disposed || state.phase !== 'DEPLOY') return
+
+    // ── 同步快路径：与改造前的 while 循环逐字一致 ────────────────────────
+    // 先探一次：若 think 同步返回，就整段跑完（不 emit，交给调用方）
     let guard = 0
     while (!disposed && state.phase === 'DEPLOY' && guard < 300) {
       const pendingSeat = match.aiSeats.find((s) => !state.deploy[s.id]?.done)
       if (!pendingSeat) break
-      const cmd = nextCommand(state, pendingSeat.id, config.difficulty, data, aiRng(pendingSeat.id))
-      if (!apply(pendingSeat.id, cmd, 'ai')) break
+
+      const actor = pendingSeat.id
+      let result: Command | Promise<Command>
+      try {
+        result = think(aiTaskFor(actor))
+      } catch {
+        // 思考抛错（例如参谋层/Worker 出问题）：退回默认实现 ——
+        // 这正是"没开参谋"的行为，保证部署一定能走完。
+        result = defaultAiThink(aiTaskFor(actor))
+      }
+
+      if (isPromiseLike(result)) {
+        // ── 命中异步：交给回调续推（下面的 while 立刻退出） ──────────────
+        const rev = state.rev
+        aiRunning = true
+        pendingThink = result
+        result.then(
+          (cmd) => {
+            if (pendingThink !== result) return // 已被 dispose / 重开作废
+            pendingThink = null
+            aiRunning = false
+            if (disposed) return
+            if (state.rev !== rev || state.phase !== 'DEPLOY') {
+              // 等待期间局面变了（人类确认部署 / 重开…）：这一步作废，交还给当前该动的人
+              if (state.phase === 'DEPLOY') pumpDeploy()
+              emit()
+              return
+            }
+            apply(actor, cmd, 'ai')
+            emit()
+            // 继续推进下一个 AI 的部署；若已全部部署完，放行被闸门拦下的人类指令
+            if (state.phase === 'DEPLOY') pumpDeploy()
+            else nudgeDeferredIfIdle()
+          },
+          () => {
+            if (pendingThink !== result) return
+            pendingThink = null
+            aiRunning = false
+            // 失败静默：这个席位退回默认实现部署（绝不死循环重试，也绝不卡死整局）
+            if (disposed) return
+            if (state.phase === 'DEPLOY') {
+              const seat = match.aiSeats.find((s) => !state.deploy[s.id]?.done)
+              if (seat) apply(seat.id, defaultAiThink(aiTaskFor(seat.id)), 'ai')
+            }
+            emit()
+            if (state.phase === 'DEPLOY') pumpDeploy()
+            else nudgeDeferredIfIdle()
+          },
+        )
+        return
+      }
+
+      if (!apply(actor, result, 'ai')) break
       guard += 1
     }
+
+    // ── AI 部署已全部完成：放行被闸门拦下的人类指令 ──────────────────────
+    // 注意判据是"还有没有待部署的 AI 席位"，**不是** `phase !== 'DEPLOY'` ——
+    // AI 部署完时人类可能还没部署，phase 仍是 DEPLOY，但闸门此时就该开了。
+    // 同步路径下队列恒为空 ⇒ 这一步是无操作，改造前行为零变化。
+    nudgeDeferredIfIdle()
+  }
+
+  /** AI 部署已收尾（没有未完成席位、也没有在途思考）时，放行被拦下的人类指令 */
+  function nudgeDeferredIfIdle(): void {
+    if (disposed || aiRunning) return
+    if (match.aiSeats.some((s) => !state.deploy[s.id]?.done)) return
+    drainDeferredHumanCommands()
   }
 
   /**
@@ -346,24 +444,42 @@ export function createPveSession(options: PveSessionOptions): PveSession {
     return hashSeed(config.seed, state.rev, state.turnSeq, state.turnIndex, playerId, config.difficulty)
   }
 
-  function aiRng(playerId: PlayerId): () => number {
-    return mulberry32(aiSeed(playerId))
-  }
+  // 注：这里曾经有个 `aiRng(playerId)`，供 `pumpDeploy` 的同步 while 循环直接建 RNG。
+  // 部署阶段改为走 `think` 之后，随机数由 `defaultAiThink` 一律用 `mulberry32(task.seed)`
+  // 现造 —— 与 `stepAi` 完全同源（同一粒种子、同一构造方式），因此该函数已被移除。
+  // 保留 `aiSeed` 是因为它仍是**跨线程载荷**（Worker 侧要拿它还原随机序列）。
 
-  /** 组装一次"AI 思考"任务（默认实现与 Worker 实现用的是同一份入参） */
-  function aiTaskFor(playerId: PlayerId): AiTask {
-    return {
+  /**
+   * 组装一次"AI 思考"任务（默认实现与 Worker 实现用的是同一份入参）。
+   *
+   * `profile` 可选：由 LLM 参谋层（`withAdvisor`）在**装饰 `think` 时**注入。
+   * **不传时任务里没有这个字段** —— 于是 `defaultAiThink` / `handleAiRequest`
+   * 都走"按难度取档"的老路，与改造前逐字一致。
+   */
+  function aiTaskFor(playerId: PlayerId, profile?: AiProfile): AiTask {
+    const task: AiTask = {
       state,
       playerId,
       difficulty: config.difficulty,
       seed: aiSeed(playerId),
       map: getMap(state.mapId, data),
     }
+    if (profile) task.profile = profile
+    return task
   }
 
-  /** 默认实现：主线程同步计算（与加 Worker 之前逐字一致） */
+  /**
+   * 默认实现：主线程同步计算（与加 Worker 之前逐字一致）。
+   *
+   * 有 `profile` 时改用 `nextCommandWith`（同样的纯函数，只是档案由外部给定）；
+   * 没有时调用 `nextCommand` —— **两条路径共用同一个 `mulberry32(task.seed)`**，
+   * 因此"参谋只改档案、不改随机数"这条承诺在代码里是显式的。
+   */
   function defaultAiThink(task: AiTask): Command {
-    return nextCommand(task.state, task.playerId, task.difficulty, data, mulberry32(task.seed))
+    const random = mulberry32(task.seed)
+    return task.profile
+      ? nextCommandWith(task.state, task.playerId, task.profile, data, random)
+      : nextCommand(task.state, task.playerId, task.difficulty, data, random)
   }
 
   const think: AiThinker = options.aiThink ?? defaultAiThink
@@ -497,11 +613,56 @@ export function createPveSession(options: PveSessionOptions): PveSession {
   function sendCommand(cmd: Command): void {
     if (disposed) return
     if (state.phase === 'GAME_OVER' && cmd.type !== 'resign') return
+
+    // ── 部署阶段的"AI 先行闸门" ────────────────────────────────────────
+    // 保持"所有 AI 先部署完，人类再落子"这条**顺序不变量**：
+    // 改造前 `pumpDeploy` 是同步的，构造期间就把 AI 部署完了，因此人类指令必然排在其后；
+    // 走异步 `think` 后 AI 的部署会延迟到回调，若不拦，人类就会"插队"，
+    // 导致 state.rev 序列不同 ⇒ 后续 AI 决策的派生种子不同 ⇒ 与同步路径分叉。
+    // 故：只要还有 AI 未部署完（且正有在途思考），就把人类**部署类**指令排队，
+    // 等 AI 部署收尾后按原顺序重放。
+    //
+    // ⚠️ `resign` 是控制类指令，**绝不排队** —— 认输必须立刻生效，
+    // 否则"等待期间人类认输"的语义会被破坏（迟到的 AI 部署会污染已结束的局面）。
+    if (state.phase === 'DEPLOY' && cmd.type !== 'resign' && aiRunning && pendingThink !== null) {
+      deferredHumanCommands.push(cmd)
+      return
+    }
+
     if (!apply(humanId, cmd, 'human')) {
       emit()
       return
     }
     advanceAfterHuman()
+  }
+
+  /**
+   * 部署阶段被"AI 先行闸门"排队的人类指令 —— 等 AI 部署完再按序重放。
+   * （队列本体在最上面声明；这里只放放行函数。）
+   *
+   * ⚠️ **必须防重入**：`advanceAfterHuman()` 会调 `pumpDeploy()`，后者收尾时又会
+   * 调 `nudgeDeferredIfIdle()` → 回到本函数。若不防重入，外层 `while` 的 `shift()`
+   * 会与内层递归交错，导致"只重放了一条"这种诡异结果。
+   * 用 `draining` 旗标：只有最外层那次真正在驱动队列。
+   */
+  function drainDeferredHumanCommands(): void {
+    if (draining) return
+    draining = true
+    try {
+      while (deferredHumanCommands.length > 0 && !disposed) {
+        // 又出现了新的在途 AI 思考（例如人类部署触发了 AI 排程）：交给它，稍后再放行
+        if (aiRunning) return
+        const cmd = deferredHumanCommands.shift() as Command
+        if (state.phase === 'GAME_OVER' && cmd.type !== 'resign') continue
+        if (!apply(humanId, cmd, 'human')) {
+          emit()
+          continue
+        }
+        advanceAfterHuman()
+      }
+    } finally {
+      draining = false
+    }
   }
 
   function restart(patch?: Partial<PveConfig>): void {

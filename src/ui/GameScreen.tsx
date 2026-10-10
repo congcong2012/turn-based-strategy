@@ -9,6 +9,7 @@ import type { RoomActions } from '../hooks/useRoom'
 import type { GameState, PlayerId } from '../game/types'
 import { BoardCanvas } from './BoardCanvas'
 import type { FocusRequest } from './BoardCanvas'
+import { BattleLog } from './BattleLog'
 import { ConnectStatusBadge } from './ConnectStatusBadge'
 import { ConnectionHelp } from './ConnectionHelp'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
@@ -222,6 +223,8 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
     [isOver, game, nameOfPlayer, view.log, view.spectating, view.selfId],
   )
   const [reportCopied, setReportCopied] = useState(false)
+  /** 完整战斗日志面板（整局战报，按回合分组） */
+  const [showBattleLog, setShowBattleLog] = useState(false)
 
   // 进入部署阶段：自动把镜头对准己方部署区（避免"看不到自己的区域、点了却被告知不在部署区"）
   useEffect(() => {
@@ -370,6 +373,14 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
         </span>
         <button type="button" data-testid="locate-button" onClick={locate} title="把镜头对准我的部署区 / 部队">
           🎯 定位
+        </button>
+        <button
+          type="button"
+          data-testid="battle-log-button"
+          onClick={() => setShowBattleLog(true)}
+          title="回看整局战斗日志"
+        >
+          📜 日志
         </button>
         {mode === 'online' ? (
           <>
@@ -699,10 +710,31 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
 
               {view.log.length > 0 ? (
                 <section data-testid="event-log">
-                  <h2>战报</h2>
+                  <h2>
+                    战报
+                    {/*
+                      只显示最近 12 条是为了"扫一眼刚发生什么"；想看整局请点右边这个按钮。
+                      按钮放在 h2 里是为了不改变原来的排版（E2E 依赖 event-log 的文本内容）。
+                    */}
+                    <button
+                      type="button"
+                      className="link-button"
+                      data-testid="open-battle-log"
+                      onClick={() => setShowBattleLog(true)}
+                    >
+                      查看完整日志
+                    </button>
+                  </h2>
                   <ol className="log-list">
+                    {/*
+                      key 用「这行在**整局战报**里的序号」，而不是「在 log 数组里的下标」：
+                      `log` 是滚动窗口，新事件进来时老行会整体左移 —— 用下标当 key，
+                      React 会把同一行当成"换了内容的另一行"而整片重渲染。
+                      `fullLog` 只追加、永不左移（长度就是"到目前为止一共几条"），倒序取尾部即稳定。
+                    */}
                     {[...view.log].reverse().slice(0, 12).map((line, index) => (
-                      <li key={view.log.length - index}>{line}</li>
+                      // biome-ignore lint/suspicious/noArrayIndexKey: 这里**故意**用下标反向计算在完整战报中的绝对序号（fullLog.length - index）—— 它随列表只增不减，是稳定身份；直接用 index 才会出问题
+                      <li key={view.fullLog.length - index}>{line}</li>
                     ))}
                   </ol>
                 </section>
@@ -827,6 +859,14 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
             )}
           </div>
         </div>
+      ) : null}
+
+      {/*
+        完整战斗日志：整局战报按回合铺开，可搜索、可回看。
+        放在最外层（而不是侧栏里）是因为它是盖住全屏的弹层。
+      */}
+      {showBattleLog ? (
+        <BattleLog rounds={view.rounds} selfName={nameOf(view, view.selfId)} onClose={() => setShowBattleLog(false)} />
       ) : null}
     </div>
   )

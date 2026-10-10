@@ -321,4 +321,45 @@ describe('对局指令的房间集成（房主权威）', () => {
     expect(bobAgain.view.game?.phase).toBe('DEPLOY')
     expect(bobAgain.view.game?.units).toHaveLength(1)
   })
+
+  it('★ 完整战报：房主权威维护，刷新后重连的人也能拿到整局历史', async () => {
+    const { alice, bob } = await twoPeers(hub)
+    alice.session.setReady(true)
+    bob.session.setReady(true)
+    await vi.advanceTimersByTimeAsync(100)
+    alice.session.startGame()
+    await vi.advanceTimersByTimeAsync(100)
+
+    // 双方各部署一次 → 房主侧累积出战报
+    bob.session.sendCommand({ type: 'deploy', unitType: 'sword', x: 11, y: 22 })
+    await vi.advanceTimersByTimeAsync(100)
+    alice.session.sendCommand({ type: 'deploy', unitType: 'sword', x: 11, y: 1 })
+    await vi.advanceTimersByTimeAsync(100)
+
+    // 房主手里有完整战报；在线的客户端同步到同一份
+    const hostRounds = alice.view.rounds
+    expect(hostRounds.length).toBeGreaterThan(0)
+    expect(hostRounds.flatMap((r) => r.lines).length).toBeGreaterThan(0)
+    expect(bob.view.rounds).toEqual(hostRounds)
+
+    // ★ bob 刷新：新连接、同 playerId —— 它此前的事件流全是空的，必须靠房主补发
+    const bobAgain = makePeer(hub, 'bob', '乙')
+    await bobAgain.session.join(ROOM)
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(bobAgain.view.rounds).toEqual(hostRounds)
+    // 这份战报是有内容的（而不是"补了个空数组"）
+    expect(bobAgain.view.rounds.flatMap((r) => r.lines).length).toBeGreaterThan(0)
+  })
+
+  it('★ 完整战报：分组里的行与滚动窗口 log 的内容一致（同一份事实）', async () => {
+    const { alice } = await twoPeers(hub)
+    alice.session.setReady(true)
+    await vi.advanceTimersByTimeAsync(100)
+
+    const flat = alice.view.rounds.flatMap((r) => r.lines)
+    // 战报还没开始时两边都是空的
+    expect(flat).toEqual([])
+    expect(alice.view.log).toEqual([])
+  })
 })

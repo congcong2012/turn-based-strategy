@@ -2,9 +2,15 @@ name: Deploy to GitHub Pages
 
 on:
   push:
+    # master         = 原始主线（不动）
     # workbuddy-edition = 单人练习（PVE）分支：让该分支也能自行发布到 Pages，
-    # 这样不必先合并到 master 就能在线验收（Pages 每个仓库只有一个站点，后发布者生效）。
-    branches: [main, master, workbuddy-edition]
+    #   这样不必先合并到 master 就能在线验收（Pages 每个仓库只有一个站点，后发布者生效）。
+    #
+    # ⚠️ **刻意不含 `main`**：本仓库的 `main` 只是 2026-09-11 在 GitHub 网页 UI 上做的
+    #    初始提交（b093158 "Fix HTML encoding issues in index.html"），与 master 毫无关系、
+    #    此后从未被推送过。它留在触发列表里等于埋了个雷 —— 哪天误往 main 推东西会**直接上线**。
+    #    2026-10-10 移除；要恢复请先确认 main 真的承担了发布职责。
+    branches: [master, workbuddy-edition]
   workflow_dispatch:
 
 permissions:
@@ -34,6 +40,10 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # 7 秒就能跑完，放在最前面：风格/明显错误不通过时不必再花 5 分钟跑单测与打包
+      - name: Lint
+        run: pnpm lint
+
       - name: Unit tests
         run: pnpm test
 
@@ -62,7 +72,7 @@ jobs:
           path: dist
 
   # E2E 质量门：本 job 失败则 deploy 被 skip（这就是"阻塞部署"）。
-  # 阻塞门内容 = local + mobile + preview 的离线部分（--grep-invert @network），共 38 条。
+  # 阻塞门内容 = local + mobile + preview 的离线部分（--grep-invert @network），共 67 条。
   # preview 里依赖公共信令的 2 条另跑一步（continue-on-error）——覆盖还在、结果可见，
   # 但不会因为公共 MQTT 抖动而卡住上线。
   e2e:

@@ -257,7 +257,7 @@ export function resolveTurn(state: GameState, data: GameData = DATA): { state: G
 export function endTurn(state: GameState, data: GameData = DATA): { state: GameState; events: GameEvent[] } {
   const resolved = resolveTurn(state, data)
   const events = [...resolved.events]
-  let s = resolved.state
+  const s = resolved.state
   if (s.phase === 'GAME_OVER') return { state: s, events }
 
   s.turnPhase = 'HANDOVER'

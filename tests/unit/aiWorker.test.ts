@@ -167,3 +167,77 @@ describe('aiWorker · 客户端的一定可用性', () => {
     expect(() => client.dispose()).not.toThrow()
   })
 })
+
+describe('aiWorker · 可选 profile（LLM 参谋的覆盖档）', () => {
+  it('★ 任务不带 profile ⇒ 与改造前逐字相同（协议层零变化）', () => {
+    const state = createGame('ancient_01', ['you', 'ai-1'], DATA)
+    const data = createWorkerData()
+    const task = taskFor(state, 'hard')
+    // 显式确认任务上没有 profile 字段（aiTaskFor 在不传时不会塞）
+    expect('profile' in task).toBe(false)
+    const viaWorker = handleAiRequest({ ...task, id: 1 }, data)
+    const viaMain = nextCommand(state, task.playerId, 'hard', DATA, mulberry32(task.seed))
+    expect(viaWorker).toEqual(viaMain)
+  })
+
+  it('任务带 profile ⇒ 走 nextCommandWith（用给定档案算），且与主线程一致', async () => {
+    const { nextCommandWith } = await import('../../src/ai')
+    const { profileFor } = await import('../../src/ai/profile')
+    const { parsePlan, planToProfile } = await import('../../src/ai/advisor/plan')
+
+    const state = createGame('ancient_01', ['you', 'ai-1'], DATA)
+    const data = createWorkerData()
+    const plan = parsePlan({
+      aggression: 'high',
+      economy: 'low',
+      defense: 'medium',
+      focusFire: 'high',
+      counterPick: 'medium',
+      risk: 'low',
+      deploy: 'balanced',
+    })
+    expect(plan).not.toBeNull()
+    const profile = planToProfile(plan!, 'hard')
+    // 前提：这份档案确实与 hard 原档不同（否则这条测试没在测东西）
+    expect(profile).not.toEqual(profileFor('hard'))
+
+    const task = { ...taskFor(state, 'hard'), profile }
+    const viaWorker = handleAiRequest({ ...task, id: 1 }, data)
+    const viaMain = nextCommandWith(state, task.playerId, profile, DATA, mulberry32(task.seed))
+    expect(viaWorker).toEqual(viaMain)
+  })
+
+  it('带 profile 时随机数种子仍用 task.seed（参谋不改随机序列）', async () => {
+    const { nextCommandWith } = await import('../../src/ai')
+    const { parsePlan, planToProfile } = await import('../../src/ai/advisor/plan')
+
+    const state = createGame('ancient_01', ['you', 'ai-1'], DATA)
+    const data = createWorkerData()
+    const plan = parsePlan({ aggression: 'high' })!
+    const profile = planToProfile(plan, 'easy')
+
+    const task = { ...taskFor(state, 'easy'), profile }
+    const viaWorker = handleAiRequest({ ...task, id: 1 }, data)
+    // 用同一份 profile、同一个 seed 在主线程重算 —— 必须逐字相同
+    expect(viaWorker).toEqual(nextCommandWith(state, task.playerId, profile, DATA, mulberry32(task.seed)))
+  })
+
+  it('profile 不污染难度档：同一局面下不带 profile 的结果仍是原档的', async () => {
+    const { profileFor } = await import('../../src/ai/profile')
+    const { parsePlan, planToProfile } = await import('../../src/ai/advisor/plan')
+
+    const state = createGame('ancient_01', ['you', 'ai-1'], DATA)
+    const data = createWorkerData()
+    // 先用一份"极端"档案算一次
+    const profile = planToProfile(parsePlan({ aggression: 'high', risk: 'high' })!, 'normal')
+    handleAiRequest({ ...taskFor(state, 'normal'), profile, id: 1 }, data)
+
+    // 再不带 profile 算一次 —— 结果必须等于原档（证明上一步没改到 PROFILES）
+    const plain = taskFor(state, 'normal')
+    expect(handleAiRequest({ ...plain, id: 2 }, data)).toEqual(
+      nextCommand(state, plain.playerId, 'normal', DATA, mulberry32(plain.seed)),
+    )
+    // profileFor 返回副本，原表未被污染
+    expect(profileFor('normal').focusFire).toBe(0.15)
+  })
+})

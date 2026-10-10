@@ -674,7 +674,8 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
           <span className="muted small">部署区（拖出一个矩形）</span>
           {map.deployZones.map((_, index) => (
             <button
-              key={index}
+              // biome-ignore lint/suspicious/noArrayIndexKey: 部署区数组按玩家槽位定长、顺序恒定，下标即稳定身份；这里也不涉及重排
+              key={'zone-' + index}
               type="button"
               data-testid={'brush-zone-' + index}
               className={brush.kind === 'zone' && brush.player === index ? 'picked' : ''}
@@ -759,15 +760,15 @@ export function MapEditor({ onNavigate, onPlaytest }: MapEditorProps) {
         </p>
         {validation.errors.length > 0 ? (
           <ul className="editor-issues" data-testid="editor-errors">
-            {validation.errors.map((issue, i) => (
-              <li key={i}>⛔ {issue.message}</li>
+            {validation.errors.map((issue) => (
+              <li key={issue.message}>⛔ {issue.message}</li>
             ))}
           </ul>
         ) : null}
         {validation.warnings.length > 0 ? (
           <ul className="editor-issues" data-testid="editor-warnings">
-            {validation.warnings.map((issue, i) => (
-              <li key={i}>⚠️ {issue.message}</li>
+            {validation.warnings.map((issue) => (
+              <li key={issue.message}>⚠️ {issue.message}</li>
             ))}
           </ul>
         ) : null}

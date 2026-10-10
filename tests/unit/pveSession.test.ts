@@ -5,6 +5,7 @@ import { createPveSession, describePveMatch, normalizeConfig, PVE_HUMAN_ID } fro
 import type { AiThinker, PveConfig, PvePersistReason, PveSaveData, PveSession } from '../../src/app/pveSession'
 import { nextCommand } from '../../src/ai'
 import { mulberry32 } from '../../src/ai/rng'
+import type { AiTask } from '../../src/ai/workerProtocol'
 import { DATA } from '../../src/game/data'
 import { currentPlayer } from '../../src/game/state'
 import type { GameState } from '../../src/game/types'
@@ -353,20 +354,38 @@ describe('pveSession · 异步"思考"（Web Worker 路径）', () => {
     return createPveSession({ config: baseConfig(), schedule: syncSchedule, actionDelayMs: 0, aiThink })
   }
 
-  /** 让人类一侧把部署走完（用 nextCommand 代打，避免手写部署坐标） */
-  function deployAsHuman(session: PveSession): void {
+  /**
+   * 让人类一侧把部署走完（用 nextCommand 代打，避免手写部署坐标）。
+   *
+   * ⚠️ 每条指令之间 `await settle()` —— 这是**刻意的**，不是权宜之计：
+   *
+   * 部署阶段从"AI 同步部署"改成"AI 走 `think`（可能异步）"之后，为保住
+   * "所有 AI 先部署完、人类再落子"这条**顺序不变量**（它是 `rev` 序列、
+   * 进而所有 AI 派生种子一致、进而两条路径逐字同棋的前提），会话加了一道
+   * **AI 先行闸门**：AI 部署在途时收到的人类指令会被排队，等 AI 收尾后按序重放。
+   *
+   * 若这里连发 5 条而不 await，`getView()` 在排队期间看到的局面没变，
+   * `nextCommand` 会**返回同一条指令 5 次** —— 5 条重复指令里只有第 1 条合法，
+   * 后 4 条因"落点已被占"被拒，队列耗尽后卡在部署阶段。这纯属测试夹具的失真，
+   * 真实 UI 里人类点击间隔是秒级，AI 部署在亚毫秒内早已完成，闸门几乎不会合上。
+   *
+   * 故此处显式模拟真实时序：发一条 → 让在途的 AI 部署跑完 → 再发下一条。
+   * 同步路径下 `settle()` 等价于无操作，因此对既有断言零影响。
+   */
+  async function deployAsHuman(session: PveSession): Promise<void> {
     for (let i = 0; i < 20; i += 1) {
       const view = session.getView()
       const game = view.game as GameState
       if (game.phase !== 'DEPLOY') return
       if (game.deploy[view.selfId]?.done) return
       session.sendCommand(nextCommand(game, view.selfId, 'normal'))
+      await settle()
     }
   }
 
   it('注入异步思考后，AI 依然能走完回合并把控制权交回人类（不假死）', async () => {
     const session = sessionWith(asyncThink)
-    deployAsHuman(session)
+    await deployAsHuman(session)
     await settle()
 
     const game = session.getView().game as GameState
@@ -376,10 +395,10 @@ describe('pveSession · 异步"思考"（Web Worker 路径）', () => {
 
   it('异步路径与同步路径走出的棋完全一致（战报逐条相同）', async () => {
     const sync = sessionWith()
-    deployAsHuman(sync)
+    await deployAsHuman(sync)
 
     const asyncSession = sessionWith(asyncThink)
-    deployAsHuman(asyncSession)
+    await deployAsHuman(asyncSession)
     await settle()
 
     // 人类结束回合，逼 AI 再走一轮；两条路径都要跑完整
@@ -393,8 +412,7 @@ describe('pveSession · 异步"思考"（Web Worker 路径）', () => {
 
   it('等待思考期间人类认输：迟到的 AI 指令不落子（局面不会被旧指令污染）', async () => {
     const session = sessionWith(asyncThink)
-    deployAsHuman(session)
-    // 刻意不等 AI 思考完就认输
+    // 构造时 AI 的部署思考已经在途（尚未 settle）—— 此刻立刻认输
     session.sendCommand({ type: 'resign' })
     const afterResign = session.getView().game as GameState
     await settle()
@@ -408,11 +426,103 @@ describe('pveSession · 异步"思考"（Web Worker 路径）', () => {
     const session = sessionWith(() => {
       throw new Error('思考炸了')
     })
-    deployAsHuman(session)
+    await deployAsHuman(session)
     await settle()
 
     const game = session.getView().game as GameState
     expect(game.phase).toBe('PLAYING')
     expect(session.getView().myTurn).toBe(true)
+  })
+})
+
+// ------------------------------------------------------------------ LLM 参谋接线
+//
+// 这一组守着"部署阶段也走 `think`"这条改造，以及"参谋只改档案、不改随机数"这条承诺。
+// 之所以重要：`pumpDeploy` 原本直接调 `nextCommand`（绕过 `think`），
+// 改造成走 `think` 之后，部署阶段才能拿到参谋给的倾向。
+
+describe('pveSession · 部署阶段走 think（LLM 参谋接线）', () => {
+  const syncScheduleLocal = (fn: () => void) => {
+    fn()
+    return () => {}
+  }
+  async function settle(rounds = 600): Promise<void> {
+    for (let i = 0; i < rounds; i += 1) await Promise.resolve()
+  }
+
+  it('★ 部署阶段会调用注入的 think（改造前是绕过 think 直接 nextCommand）', () => {
+    const seen: AiTask[] = []
+    const session = createPveSession({
+      config: baseConfig(),
+      schedule: syncScheduleLocal,
+      actionDelayMs: 0,
+      aiThink: (task) => {
+        seen.push(task)
+        return nextCommand(task.state, task.playerId, task.difficulty, DATA, mulberry32(task.seed))
+      },
+    })
+    // 构造时 AI 的部署就走 think —— 因此至少被调用过一次
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.every((t) => t.playerId !== PVE_HUMAN_ID)).toBe(true)
+    expect(session.getView().game).toBeTruthy()
+  })
+
+  it('部署期传入的任务不带 profile（除非参谋层注入）', () => {
+    const seen: AiTask[] = []
+    createPveSession({
+      config: baseConfig(),
+      schedule: syncScheduleLocal,
+      actionDelayMs: 0,
+      aiThink: (task) => {
+        seen.push(task)
+        return nextCommand(task.state, task.playerId, task.difficulty, DATA, mulberry32(task.seed))
+      },
+    })
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.every((t) => t.profile === undefined)).toBe(true)
+  })
+
+  it('think 抛错时退回默认实现，部署仍能走完（不会卡死）', async () => {
+    const session = createPveSession({
+      config: baseConfig(),
+      schedule: syncScheduleLocal,
+      actionDelayMs: 0,
+      aiThink: () => {
+        throw new Error('部署期思考炸了')
+      },
+    })
+    // 人类把部署确认掉，之后进入 PLAYING（证明 AI 的部署没有被卡住）
+    for (let i = 0; i < 20; i += 1) {
+      const view = session.getView()
+      const game = view.game as GameState
+      if (game.phase !== 'DEPLOY' || game.deploy[view.selfId]?.done) break
+      session.sendCommand(nextCommand(game, view.selfId, 'normal'))
+    }
+    session.sendCommand({ type: 'deployDone' })
+    await settle()
+
+    expect((session.getView().game as GameState).phase).toBe('PLAYING')
+  })
+
+  it('注入 profile 的 think：用该档案产出的部署指令（不改随机数）', async () => {
+    const { parsePlan, planToProfile } = await import('../../src/ai/advisor/plan')
+    const { nextCommandWith } = await import('../../src/ai')
+    const plan = parsePlan({ aggression: 'high', deploy: 'turtle' })
+    expect(plan).not.toBeNull()
+
+    const seenProfiles: Array<unknown> = []
+    const session = createPveSession({
+      config: baseConfig(),
+      schedule: syncScheduleLocal,
+      actionDelayMs: 0,
+      aiThink: (task) => {
+        // 参谋层会给 task 注入 profile；这里模拟"注入后交给内核"
+        const profile = planToProfile(plan!, task.difficulty)
+        seenProfiles.push(profile)
+        return nextCommandWith(task.state, task.playerId, profile, DATA, mulberry32(task.seed))
+      },
+    })
+    expect(seenProfiles.length).toBeGreaterThan(0)
+    expect(session.getView().game).toBeTruthy()
   })
 })

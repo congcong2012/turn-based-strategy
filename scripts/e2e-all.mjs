@@ -27,7 +27,7 @@ import { join } from 'node:path'
 
 const TRACKS = ['local', 'mobile', 'preview', 'p2p', 'manual']
 /** 各轨的期望条数：只用来提示"是不是少跑了"，不作为硬门槛（改了用例数不用同步改这里） */
-const EXPECTED = { local: 48, mobile: 2, preview: 4, p2p: 1, manual: 1 }
+const EXPECTED = { local: 61, mobile: 2, preview: 4, p2p: 1, manual: 1 }
 
 const args = process.argv.slice(2)
 const opt = (name, fallback) => {

@@ -1,0 +1,85 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": [
+			"src/**/*.ts",
+			"src/**/*.tsx",
+			"tests/**/*.ts",
+			"scripts/**/*.{ts,mjs}",
+			"*.ts",
+			"!dist",
+			"!coverage",
+			"!node_modules",
+			"!tmp",
+			"!test-results",
+			"!playwright-report"
+		]
+	},
+	"formatter": {
+		"enabled": false
+	},
+	"assist": {
+		"enabled": false
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"suspicious": {
+				"noExplicitAny": "error",
+				"noAssignInExpressions": "off",
+				"noConfusingVoidType": "off"
+			},
+			"style": {
+				"noNonNullAssertion": "off",
+				"noParameterAssign": "error",
+				"useConst": "error",
+				"useImportType": "warn",
+				"noUnusedTemplateLiteral": "off",
+				"useTemplate": "off"
+			},
+			"correctness": {
+				"noUnusedVariables": "error",
+				"noUnusedImports": "error",
+				"useExhaustiveDependencies": "warn"
+			},
+			"complexity": {
+				"noBannedTypes": "error",
+				"noForEach": "off",
+				"useLiteralKeys": "off",
+				"noExcessiveCognitiveComplexity": "off"
+			},
+			"performance": {
+				"noDelete": "warn"
+			},
+			"a11y": {
+				"useKeyWithClickEvents": "off",
+				"useSemanticElements": "off",
+				"noStaticElementInteractions": "off"
+			}
+		}
+	},
+	"javascript": {
+		"globals": ["__APP_VERSION__", "__BUILD_TIME__", "__GIT_SHA__"]
+	},
+	"overrides": [
+		{
+			"includes": ["scripts/**", "tests/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "warn"
+					},
+					"correctness": {
+						"noUnusedVariables": "warn"
+					}
+				}
+			}
+		}
+	]
+}

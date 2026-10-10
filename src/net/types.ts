@@ -1,6 +1,7 @@
 /** 传输层与联机协议的类型定义（M1 大厅 + M2 对局指令） */
 
 import type { Command, ErrorCode, GameEvent, GameState } from '../game/types'
+import type { LogRound } from '../game/journal'
 import type { Difficulty } from '../ai'
 
 export type PeerId = string
@@ -57,7 +58,12 @@ export type LobbySnapshot = {
 
 /** 线上消息（信封统一带 from = playerId，用于身份绑定与重连识别） */
 export type Wire =
-  | { t: 'game'; from: PlayerId; state: GameState; events?: GameEvent[] }
+  /**
+   * `state` 每次都是**全量**局面（房主权威），因此"完整战报"也顺路全量带下来：
+   * `{@link LogRound}[]` 由房主演进并广播 ⇒ 中途加入 / 刷新的客户端也能立刻看到整局历史。
+   * ⚠️ 别改成"只发增量"：客户端手上的事件流在刷新后本就不完整，增量一定会少算（见 game/journal 的说明）。
+   */
+  | { t: 'game'; from: PlayerId; state: GameState; events?: GameEvent[]; rounds?: LogRound[] }
   | { t: 'cmd'; from: PlayerId; cmd: Command }
   | { t: 'cmdRejected'; from: PlayerId; code: ErrorCode }
   | { t: 'hello'; from: PlayerId; nickname: string; joinedAt: number; spectator?: boolean }

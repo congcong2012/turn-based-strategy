@@ -13,8 +13,8 @@
 
 import { DATA } from '../game/data'
 import type { GameData, MapDef } from '../game/data'
-import { nextCommand } from './index'
-import type { Difficulty } from './profile'
+import { nextCommand, nextCommandWith } from './index'
+import type { AiProfile, Difficulty } from './profile'
 import { mulberry32 } from './rng'
 import type { Command, GameState, PlayerId } from '../game/types'
 
@@ -31,6 +31,19 @@ export interface AiTask {
    * 相比这个风险，几千字节的克隆成本可以忽略。
    */
   map: MapDef
+  /**
+   * 可选的**策略档案覆盖**（LLM 参谋用）。
+   *
+   * - **不传（undefined）**：完全等价于改造前 —— 走 `nextCommand`（按 `difficulty` 取档）；
+   * - **传了**：走 `nextCommandWith`（用这份档案决策）。
+   *
+   * 之所以做成可选字段而不是"必传"：这样联机 AI 补位、评估台、既有单测全部零改动，
+   * 且"未启用参谋 ⇒ 行为逐字不变"这条不变量在**协议层**也是成立的。
+   *
+   * ⚠️ `AiProfile` 是**纯数据**（数字 + 布尔 + 字符串数组），可安全 structured-clone；
+   * 这也是它作为跨线程载荷的前提。
+   */
+  profile?: AiProfile
 }
 
 export interface AiRequest extends AiTask {
@@ -56,8 +69,17 @@ export function createWorkerData(): GameData {
  *
  * 抽成独立函数是为了**单测能直接验证"Worker 里算出来的和主线程一模一样"**，
  * 而不必真的起一个线程。
+ *
+ * 两条分支：
+ *  - `task.profile` 存在 → `nextCommandWith`（LLM 参谋给的覆盖档，主线程算出来的那份）；
+ *  - 否则 → `nextCommand`（按难度取档，**与改造前逐字一致**）。
+ *
+ * 注意 `data.maps[task.map.id] = task.map` 这一步在两支之前：地图覆盖与走哪支无关。
  */
 export function handleAiRequest(task: AiRequest, data: GameData): Command {
   data.maps[task.map.id] = task.map
+  if (task.profile) {
+    return nextCommandWith(task.state, task.playerId, task.profile, data, mulberry32(task.seed))
+  }
   return nextCommand(task.state, task.playerId, task.difficulty, data, mulberry32(task.seed))
 }

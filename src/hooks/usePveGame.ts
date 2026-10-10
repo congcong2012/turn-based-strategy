@@ -20,6 +20,9 @@ import { createPveSession } from '../app/pveSession'
 import type { AiThinker, PveConfig, PvePersistReason, PveSaveData, PveSession } from '../app/pveSession'
 import { createAiWorkerClient } from '../ai/workerClient'
 import type { AiWorkerClient } from '../ai/workerClient'
+import { withAdvisor } from '../ai/advisor'
+import type { AdvisorStatus } from '../ai/advisor'
+import { isAdvisorUsable, loadAdvisorSettings } from '../ai/advisor/settings'
 import { PVE_SAVE_VERSION, clearPve, loadPve, savePve } from '../app/pveStore'
 import { defaultStorage } from '../net/gameStore'
 import type { RoomActions } from './useRoom'
@@ -75,6 +78,23 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
   const aiClientRef = useRef<AiWorkerClient | null>(null)
   /** 退化到主线程的原因（正常情况下为 null；用于 DEV/E2E 断言与排查） */
   const aiFallbackRef = useRef<string | null>(null)
+  /** 最近一次参谋工作结果（仅供 HUD / 观测；没有参谋时恒为 null） */
+  const advisorStatusRef = useRef<AdvisorStatus | null>(null)
+  /** 参谋包装器：与 Worker 客户端同生命周期，只装配一次 */
+  const advisorWrappedRef = useRef<AiThinker | null>(null)
+
+  /**
+   * AI 思考的执行链：**参谋（可选）→ Worker → 主线程**。
+   *
+   * 层次与职责：
+   *   1. `withAdvisor`：读设置，若启用就向 LLM 要一次"作战倾向"，
+   *      翻成 `AiProfile` 覆盖层塞进 task。**未启用时原样透传**，因此这一层可以
+   *      无条件加上去，行为与没有它时逐字一致。
+   *   2. `createAiWorkerClient`：把（可能已被参谋改过档案的）task 送到 Worker 算。
+   *
+   * ⚠️ 设置由 `withAdvisor` 在**装配时**读一次：一局之内参谋配置稳定。
+   *    玩家在设置页改完再开的新局会重新装配，因此改动依然能生效。
+   */
   const aiThink = useCallback<AiThinker>((task) => {
     if (!aiClientRef.current) {
       aiClientRef.current = createAiWorkerClient({
@@ -83,7 +103,16 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
         },
       })
     }
-    return aiClientRef.current.think(task)
+    if (!advisorWrappedRef.current) {
+      const client = aiClientRef.current
+      advisorWrappedRef.current = withAdvisor((t) => client.think(t), {
+        settings: loadAdvisorSettings(),
+        onStatus: (status) => {
+          advisorStatusRef.current = status
+        },
+      })
+    }
+    return advisorWrappedRef.current(task)
   }, [])
 
   /**
@@ -100,6 +129,9 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
       aiTransport: () => (aiClientRef.current?.usingWorker() ? 'worker' : 'main'),
       aiFallback: () => aiFallbackRef.current,
       aiWorkerStarted: () => aiClientRef.current !== null,
+      // 参谋观测点：是否启用、最近一次结果（'none' | 'ok' | 'fallback'）、以及拿到的计划
+      advisorEnabled: () => isAdvisorUsable(loadAdvisorSettings()),
+      advisorStatus: () => advisorStatusRef.current,
     }
   }, [])
 

@@ -25,10 +25,43 @@ function check(name, ok, detail = '') {
   if (!ok) problems.push(name + ' ' + detail)
 }
 
-setTimeout(() => {
+/**
+ * 总超时守护：**必须 unref()**。
+ *
+ * 否则这个 420s 的定时器会一直挂在事件循环上 —— 哪怕所有检查都跑完了、浏览器也关掉了，
+ * Node 也会一直等到它触发，于是末尾打印 "!! 线上自检超时，强制退出" 并以退出码 3 收场。
+ * 发版清单里靠退出码判断成败，这一下就把"全过"变成了"超时"（2026-10-10 修）。
+ * unref 之后：正常跑完 → 事件循环自然空 → 以真实退出码 0 退出；
+ * 真卡住时定时器照常生效。
+ */
+const watchdog = setTimeout(() => {
   console.log('!! 线上自检超时，强制退出')
   process.exit(3)
 }, 420000)
+watchdog.unref?.()
+
+/**
+ * ★ `browser.close()` 在本机（Windows + 这版 Playwright）**会挂住不返回**。
+ *
+ * 2026-10-10 用最小探针（`tmp/close-probe.mjs`）坐实：`context.close()` 都是毫秒级返回，
+ * 但 `browser.close()` 到 8s 超时都还没 resolve；且**与本脚本逻辑无关**
+ * （只 `launch()` 后立刻 `close()` 同样挂住）。
+ * 之前的症状因此是：25 项检查全过、日志停在最后一条，但脚本永远不打印
+ * "线上自检结果：25/25 通过"，只能靠 watchdog 在 420s 后以退出码 3 收场 —— 发版门禁上
+ * 把"全过"读成"超时失败"。
+ *
+ * 处置：收尾时**不阻塞等待 close**。脚本最后本来就 `process.exit()`，
+ * 进程一走 OS 会连带回收 chrome-headless-shell 子进程（已实测无残留），
+ * 所以"关不掉"这件事对结果没有任何影响 —— 只要别在那里干等就行。
+ */
+function closeQuietly(target) {
+  if (!target) return
+  try {
+    target.close?.()?.catch?.(() => {})
+  } catch {
+    /* 已经关了就算了 */
+  }
+}
 
 console.log('线上自检：' + BASE + '（房间 ' + ROOM + '）')
 
@@ -214,7 +247,11 @@ try {
 } catch (err) {
   check('自检过程未抛异常', false, String(err?.message ?? err).slice(0, 200))
 } finally {
-  await browser.close().catch(() => {})
+  // 撤掉守护定时器，别让它把正常收尾拖成"超时"
+  clearTimeout(watchdog)
+  // ★ 不 await：本机的 browser.close() 会永久挂住，而脚本马上要 process.exit()，
+  //   等它没有任何意义（详见上方 closeQuietly 的注释）
+  closeQuietly(browser)
 }
 
 const passed = results.filter((r) => r.ok).length

@@ -15,6 +15,13 @@ import type { PveConfig } from '../app/pveSession'
 import { listPveMaps } from '../app/mapStore'
 import { DEEP_DIFFICULTY, isDifficultyUsable } from '../ai'
 import type { PlayableDifficulty } from '../ai'
+import { DEFAULT_MODEL } from '../ai/advisor/client'
+import {
+  DEFAULT_ADVISOR_SETTINGS,
+  loadAdvisorSettings,
+  saveAdvisorSettings,
+} from '../ai/advisor/settings'
+import type { AdvisorSettings } from '../ai/advisor/settings'
 import {
   DEFAULT_HARD_DIFFICULTY,
   HARD_MODE_OPTIONS,
@@ -56,6 +63,26 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
   const [hardDifficulty, setHardDifficulty] = useState<PlayableDifficulty>(DEFAULT_HARD_DIFFICULTY)
   // null = 按人数自动挑；有值 = 玩家手动选的地图
   const [pickedMapId, setPickedMapId] = useState<string | null>(preferredMapId ?? null)
+
+  // ── AI 参谋（可选）：本机偏好，独立于本局配置，存在 localStorage ──────────
+  // 首帧同步读一次设置，这样开关的初始状态就是玩家上次保存的。
+  const [advisor, setAdvisor] = useState<AdvisorSettings>(() => loadAdvisorSettings())
+  /** 折叠的高级项（接口地址 / 模型） */
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
+  /**
+   * 改设置即存。
+   *
+   * ⚠️ 写入刻意放在 `setState` **之外**、用 `advisor` 现算，而不是放进 updater 里 ——
+   *  React 严格模式下 updater 可能被调用两次，在 updater 里做副作用（写 localStorage）
+   *  会写入不一致的中间值；更糟的是"在 effect 清理函数里存"的写法会用**上一次**的
+   *  `advisor` 覆盖掉刚改好的值（实测：勾选开关后存进去的仍是 `enabled:false`）。
+   */
+  const patchAdvisor = (patch: Partial<AdvisorSettings>) => {
+    const next = { ...advisor, ...patch }
+    setAdvisor(next)
+    saveAdvisorSettings(next)
+  }
 
   const total = opponents + 1
 
@@ -252,6 +279,93 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
           难度只改变 AI 的<b>决策水平</b>：AI 与你用<b>完全相同的规则</b>，
           军费、据点收入、单位上限、行动点一项都不多给 —— 不会靠加资源来"变强"。
         </p>
+      </section>
+
+      <section className="panel advisor-panel" data-testid="pve-advisor">
+        <h2>
+          AI 参谋 <span className="muted small">（可选 · 默认关闭）</span>
+        </h2>
+        <label className="advisor-toggle">
+          <input
+            type="checkbox"
+            data-testid="pve-advisor-enabled"
+            checked={advisor.enabled}
+            onChange={(e) => patchAdvisor({ enabled: e.target.checked })}
+          />
+          <span>
+            让大模型当<b>军师</b>：每回合给 AI 一份「作战倾向」（<b>更激进 / 更保守</b>、
+            重视经济还是防守…），再由 AI 自己的推演系统去执行。
+          </span>
+        </label>
+
+        {advisor.enabled ? (
+          <div className="advisor-body" data-testid="pve-advisor-body">
+            <label className="advisor-field">
+              <span className="advisor-label">API Key</span>
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="sk-..."
+                data-testid="pve-advisor-key"
+                value={advisor.apiKey}
+                onChange={(e) => patchAdvisor({ apiKey: e.target.value })}
+              />
+            </label>
+
+            <button
+              type="button"
+              className="advisor-advanced-toggle"
+              data-testid="pve-advisor-advanced-toggle"
+              onClick={() => setShowAdvanced((v) => !v)}
+            >
+              {showAdvanced ? '收起服务器设置' : '服务器设置（一般不用改）'}
+            </button>
+
+            {showAdvanced ? (
+              <div className="advisor-advanced" data-testid="pve-advisor-advanced">
+                <label className="advisor-field">
+                  <span className="advisor-label">接口地址</span>
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={DEFAULT_ADVISOR_SETTINGS.baseUrl}
+                    data-testid="pve-advisor-baseurl"
+                    value={advisor.baseUrl}
+                    onChange={(e) => patchAdvisor({ baseUrl: e.target.value })}
+                  />
+                </label>
+                <label className="advisor-field">
+                  <span className="advisor-label">模型</span>
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={DEFAULT_MODEL}
+                    data-testid="pve-advisor-model"
+                    value={advisor.model}
+                    onChange={(e) => patchAdvisor({ model: e.target.value })}
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            <p className="muted small" data-testid="pve-advisor-privacy">
+              🔒 密钥只保存在<b>你自己这台设备的浏览器里</b>，不会上传、也不会写进游戏文件。
+              本项目是纯静态、无服务器的，因此没有更安全的存放处 —— 请自行判断是否填写。
+            </p>
+            <p className="muted small" data-testid="pve-advisor-fallback">
+              任何异常（没网 / 密钥无效 / 超时）都会<b>静默退回</b>原难度，对局绝不会因此中断。
+              未开启时行为与改造前完全一致。
+            </p>
+            <p className="muted small" data-testid="pve-advisor-caveat">
+              如实说明：参谋只是给 AI 的搜索<b>换一套参数偏好</b>，不保证变强 ——
+              实测中"调参"往往收益有限，它的价值主要在<b>让 AI 的风格更有辨识度</b>。
+              另外，参谋结果不会被保存到存档里，因此<b>刷新页面后本回合的倾向可能变化</b>。
+            </p>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">

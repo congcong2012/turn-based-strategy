@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { ROOM_CODE_LENGTH, normalizeRoomCode, randomRoomCode, isValidRoomCode } from '../app/roomCode'
 import { defaultMapFor } from '../game/data'
 import { listLobbyMaps } from '../app/mapStore'
@@ -41,6 +42,28 @@ const ROLE_TEXT: Record<string, string> = {
   joining: '选举房主中…',
   host: '你是房主',
   client: '你是玩家',
+}
+
+/**
+ * 设置项容器：房主看到的是可操作控件（→ `<label>`）；其他人看到的是只读文案（→ `<span>`）。
+ *
+ * 起因（2026-10-10 加 lint 时暴露）：这几项原来是"两种分支都包在同一个 `<label>` 里" ——
+ * 房主那条分支里是 `<select>`（合法），非房主那条只有一段 `<span>`，
+ * 于是生成了**不含任何表单控件的 `<label>`**。HTML 规范要求 label 必须关联控件，
+ * 对屏幕阅读器也只是噪音。这里按"这一项此刻是不是真的可操作"来选标签名，
+ * 语义更准，也不再报警。
+ *
+ * ★ 注意：**不要**把它写成"自动判断子节点里有没有控件"的通用组件 ——
+ *   试过，Biome 的静态分析看不穿 `children`，照样报 `noLabelWithoutControl`，
+ *   还得再补一堆 lint 豁免，得不偿失。就按调用方自己知道的那个布尔量选，最直白。
+ */
+function Field({ editable, children }: { editable: boolean; children: ReactNode }) {
+  return editable ? (
+    // biome-ignore lint/a11y/noLabelWithoutControl: children 里就是那个 <select>（由调用方按 editable 传入），静态分析看不穿透传的 children
+    <label className="field inline">{children}</label>
+  ) : (
+    <span className="field inline">{children}</span>
+  )
 }
 
 export function Lobby({
@@ -369,7 +392,7 @@ export function Lobby({
               </select>
             </label>
 
-            <label className="field inline">
+            <Field editable={view.isHost}>
               <span>地图</span>
               {view.isHost ? (
                 <select
@@ -400,8 +423,8 @@ export function Lobby({
                   {view.mapId ? (mapOptions.find((m) => m.id === view.mapId)?.name ?? view.mapId) : '由房主决定'}
                 </span>
               )}
-            </label>
-            <label className="field inline">
+            </Field>
+            <Field editable={view.isHost}>
               <span>AI 补位</span>
               {view.isHost ? (
                 <select
@@ -421,13 +444,13 @@ export function Lobby({
                   {view.aiSlotCount > 0 ? `共 ${view.aiSlotCount} 方（不足的用 AI 补）` : '不补位'}
                 </span>
               )}
-            </label>
+            </Field>
 
             {/*
               AI 用哪一档：**AI 补位 + 掉线托管共用**这个设置，所以即使「不补位」也有意义
               （对局中有人掉线、房主点「AI 代打」时用的就是它）。
             */}
-            <label className="field inline">
+            <Field editable={view.isHost}>
               <span>AI 难度</span>
               {view.isHost ? (
                 <select
@@ -447,7 +470,7 @@ export function Lobby({
                   {difficultyOptionLabel(view.aiDifficulty)}
                 </span>
               )}
-            </label>
+            </Field>
 
             {view.isHost && view.aiSlotCount > 0 ? (
               <p className="muted small" data-testid="ai-slots-hint">

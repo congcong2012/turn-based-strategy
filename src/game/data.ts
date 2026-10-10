@@ -107,7 +107,7 @@ export function unregisterMap(mapId: string, data: GameData = DATA): void {
 
 /** 运行时是否存在这张地图 */
 export function hasMap(mapId: string, data: GameData = DATA): boolean {
-  return Object.prototype.hasOwnProperty.call(data.maps, mapId)
+  return Object.hasOwn(data.maps, mapId)
 }
 
 export function mapInfoOf(map: MapDef): MapInfo {

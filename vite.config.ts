@@ -42,5 +42,24 @@ export default defineConfig({
     // 套件里有"整局 AI 自对弈"级别的模拟（pveSession / ai 的完整对局用例），
     // 单跑约 2–3 秒，在 CI 或全量并行时会超过默认的 5 秒。给一个仍然能抓住"卡死"的上限。
     testTimeout: 20_000,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'json-summary'],
+      reportsDirectory: 'coverage',
+      // 只统计真正的产品代码。`src/main.tsx` 是纯挂载入口、`src/render/**` 是 Pixi 画布
+      // （渲染结果靠 E2E 断言，单测跑不动 WebGL）—— 把它们算进来只会稀释信号。
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/main.tsx',
+        'src/vite-env.d.ts',
+        'src/render/**',
+        'src/ui/**',
+        'src/hooks/**',
+        '**/*.d.ts',
+      ],
+      // ★ 不设 thresholds：本项目的防线是"404 条单测 + 59 条 E2E"，
+      //   覆盖率是用来看**盲区**的体检表，不是用来卡 CI 的门槛
+      //   （设了门槛只会逼着人写凑数的断言，反而降低质量）。
+    },
   },
 })
