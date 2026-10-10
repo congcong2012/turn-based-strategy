@@ -55,7 +55,42 @@
 | 单元测试 | ✅ **544 passed（44 文件）**；较 1.5.0 的 404 净增 **140**，含 AI 参谋套件 119 条（plan 23 / digest 17 / prompt 11 / client 19 / settings 17 / withAdvisor 32）与 aiWorker +13、pveSession +18、journal 等 |
 | E2E（`npm run e2e:all`，5 轨全量） | ✅ **69 passed · 0 failed**：**local 61** · mobile 2 · preview 4 · p2p 1 · manual 1。新增 `tests/e2e/advisor.spec.ts` 9 条离线用例（面板 / 持久化 / 密钥不外泄 / 手机不溢出 / 关闭时零外网请求 / 部署→行动不卡死），另 1 条 `@network` 用例仅在配了 `ADVISOR_API_KEY` 时运行、CI 与本地默认跳过 |
 | 生产构建 | ✅ `CODEBUDDY_SAFE_DELETE_ENABLED=0 npm run build`，产物 **43 文件**、入口分片与 Worker 分片齐全 |
-| 线上自检 | 见 `docs/release-checklist.md` 第 7 步（`node scripts/verify-live.mjs`） |
+| 线上自检 | ✅ **25/25 通过**（`node scripts/verify-live.mjs`，真实公网，退出码 0）；页脚 `v1.6.0 · 2026-10-10 · a033358` |
+
+**线上自检输出（2026-10-11 00:55）**
+
+```
+线上自检：https://congcong2012.github.io/turn-based-strategy/（房间 XJGGGH）
+  ✅ 主页默认落地（三个入口）
+  ✅ 主页有规则速查入口
+  ✅ 页脚有捐赠按钮
+  ✅ 页脚显示版本号  v1.6.0 · 2026-10-10 · a033358 · 纯静态托管 · 无后端 / 无数据库 · 数据只在玩家设
+  ✅ 单人练习进入设置页（不再是"开发中"占位）
+  ✅ 设置页可选难度
+  ✅ 单人练习本地开局（进入部署阶段）  部署
+  ✅ 退出单人局回到主页
+  ✅ 规则速查表格有真实数据
+  ✅ 规则速查里的刀盾兵克制数值与数据一致  55,75,80,45,12,70
+  ✅ 收款码图片真实加载  1192px
+  ✅ 大厅顶部无过时过程文案  联机大厅
+  ✅ 大厅可返回主页
+  ✅ 加密房创建成功（房主）
+  ✅ 邀请链接带房间码与密码  https://congcong2012.github.io/turn-based-strategy/?room=XJGGGH&key=tea-nzrr
+  ✅ 邀请链接自动预填房间码
+  ✅ 邀请链接自动预填密码
+  ✅ 正确密码下双方互相可见
+  ✅ 密码不一致时看不见对方（连接层拒绝配对）  列表 1 人
+  ✅ 错误密码的提示已中文化并指向密码  房间密码不一致：请和房主核对密码（区分大小写），或直接用房主发来的邀请链接（链接里自带密码）
+  ✅ 刷新后自动回到加密房并看到所有人  角色：你是玩家
+  ✅ 房主侧刷新后无重复玩家
+  ✅ 主页/大厅无 JS 异常
+  ✅ 好友侧无 JS 异常
+  ✅ 错误密码侧无 JS 异常
+
+线上自检结果：25/25 通过
+```
+
+部署记录：CI run `38069021464`（build / e2e / deploy 三作业全绿）。
 
 ## [1.5.0] · 2026-10-07
 
