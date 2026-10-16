@@ -31,7 +31,7 @@ export interface GameScreenProps {
   onRestart?: () => void
 }
 
-const ROLE_COLORS = ['#c8503c', '#3fa7a0', '#d9a441', '#8a6fd0']
+const ROLE_COLORS = ['#c65a44', '#4aa89b', '#d2a24b', '#9078c8']
 
 function playerColor(state: GameState, playerId: PlayerId): string {
   const index = state.players.indexOf(playerId)

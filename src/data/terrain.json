@@ -11,7 +11,7 @@
         "siege": 2
       },
       "defense": 0,
-      "color": "#4e6b3d"
+      "color": "#566838"
     },
     {
       "id": "road",
@@ -23,7 +23,7 @@
         "siege": 1
       },
       "defense": 0,
-      "color": "#8b7a58"
+      "color": "#95805a"
     },
     {
       "id": "forest",
@@ -35,7 +35,7 @@
         "siege": 3
       },
       "defense": 0.25,
-      "color": "#2f4a2b"
+      "color": "#33492c"
     },
     {
       "id": "mountain",
@@ -47,7 +47,7 @@
         "siege": null
       },
       "defense": 0.35,
-      "color": "#6d6455"
+      "color": "#70685a"
     },
     {
       "id": "river",
@@ -59,7 +59,7 @@
         "siege": null
       },
       "defense": 0,
-      "color": "#2b5d7a"
+      "color": "#2e5c73"
     },
     {
       "id": "building",
@@ -71,7 +71,7 @@
         "siege": 2
       },
       "defense": 0.3,
-      "color": "#7d6a45"
+      "color": "#7f6d47"
     }
   ]
 }

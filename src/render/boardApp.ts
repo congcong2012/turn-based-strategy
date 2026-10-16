@@ -29,7 +29,7 @@ export interface BoardView {
   attackTooClose?: string[]
 }
 
-const OWNER_COLORS = [0xc8503c, 0x3fa7a0, 0xd9a441, 0x8a6fd0]
+const OWNER_COLORS = [0xc65a44, 0x4aa89b, 0xd2a24b, 0x9078c8]
 const NEUTRAL = 0x6b6255
 // 小屏（手机 393px 宽）要能一次看全 24×24 棋盘：1152px 宽 → 需要 ~0.34 倍，因此下限放到 0.2
 const MIN_SCALE = 0.2
@@ -126,7 +126,7 @@ export class BoardApp {
     await app.init({
       width: container.clientWidth || 800,
       height: container.clientHeight || 600,
-      background: 0x14110f,
+      background: 0x15110d,
       antialias: true,
       resolution: Math.min(2, globalThis.devicePixelRatio || 1),
       autoDensity: true,
@@ -708,16 +708,16 @@ export class BoardApp {
     if (zone) {
       overlay
         .rect(zone.x0 * TILE, zone.y0 * TILE, (zone.x1 - zone.x0 + 1) * TILE, (zone.y1 - zone.y0 + 1) * TILE)
-        .fill({ color: 0x3fa7a0, alpha: 0.22 })
-        .stroke({ width: 4, color: 0x5fd8cf, alpha: 0.9 })
+        .fill({ color: 0x4aa89b, alpha: 0.22 })
+        .stroke({ width: 4, color: 0x6fd6c9, alpha: 0.9 })
     }
     for (const key of view.reachable) {
       const [x, y] = key.split(',').map(Number)
-      overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).fill({ color: 0x4f9fd4, alpha: 0.3 })
+      overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).fill({ color: 0x5490bd, alpha: 0.3 })
     }
     for (const key of view.attackRange ?? []) {
       const [x, y] = key.split(',').map(Number)
-      overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).stroke({ width: 2, color: 0xd94f3d, alpha: 0.55 })
+      overlay.rect(x * TILE + 3, y * TILE + 3, TILE - 6, TILE - 6).stroke({ width: 2, color: 0xd65a44, alpha: 0.55 })
     }
     for (const key of view.attackTooClose ?? []) {
       const [x, y] = key.split(',').map(Number)
@@ -725,15 +725,15 @@ export class BoardApp {
     }
     for (const key of view.targets) {
       const [x, y] = key.split(',').map(Number)
-      overlay.rect(x * TILE + 2, y * TILE + 2, TILE - 4, TILE - 4).fill({ color: 0xd94f3d, alpha: 0.35 })
+      overlay.rect(x * TILE + 2, y * TILE + 2, TILE - 4, TILE - 4).fill({ color: 0xd65a44, alpha: 0.35 })
     }
     const selected = state.units.find((u) => u.id === view.selectedUnitId)
     if (selected) {
-      overlay.rect(selected.x * TILE + 1, selected.y * TILE + 1, TILE - 2, TILE - 2).stroke({ width: 3, color: 0xf0d27a })
+      overlay.rect(selected.x * TILE + 1, selected.y * TILE + 1, TILE - 2, TILE - 2).stroke({ width: 3, color: 0xe8c37a })
     }
     const selectedBuilding = state.buildings.find((b) => b.id === view.selectedBuildingId)
     if (selectedBuilding) {
-      overlay.rect(selectedBuilding.x * TILE + 1, selectedBuilding.y * TILE + 1, TILE - 2, TILE - 2).stroke({ width: 3, color: 0xf0d27a })
+      overlay.rect(selectedBuilding.x * TILE + 1, selectedBuilding.y * TILE + 1, TILE - 2, TILE - 2).stroke({ width: 3, color: 0xe8c37a })
     }
     for (const b of state.buildings) {
       if (!b.capture) continue
