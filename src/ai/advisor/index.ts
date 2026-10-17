@@ -146,7 +146,13 @@ export function withAdvisor(inner: AdvisorInner, options: AdvisorOptions = {}): 
           cache.set(key, plan)
           options.onStatus?.({ used: true, result: 'ok', plan })
         } else {
-          options.onStatus?.({ used: true, result: 'fallback' })
+          // 带上失败原因（HTTP 400 / 超时 / 解析失败…），排查时不必靠猜。
+          // 注意：这仍然**只是观测信息** —— 决策照旧退回原档案，玩家无感。
+          options.onStatus?.({
+            used: true,
+            result: 'fallback',
+            reason: client.lastFailure?.() ?? undefined,
+          })
         }
 
         // 拿到计划 → 覆盖档案；拿不到 → 传 undefined（即"用 inner 自己的默认"）

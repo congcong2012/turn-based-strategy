@@ -158,6 +158,36 @@ describe('★ 逐字段救（单个字段非法只回落该字段）', () => {
   })
 })
 
+describe('★ 模型名：默认值必须是网关认得的 id（否则参谋永远静默回退）', () => {
+  it('默认模型是连字符写法 deepseek-flash', () => {
+    // DeepSeek 只有 `deepseek-flash` / `deepseek-v4-pro`；写成下划线会被 400 拒绝，
+    // 而客户端契约是"失败返回 null" ⇒ 现象就是"开了参谋毫无反应"（v1.6.0 线上 bug）。
+    expect(DEFAULT_ADVISOR_SETTINGS.model).toBe('deepseek-flash')
+  })
+
+  it('★ 旧配置里的非法别名 deepseek_flash 会被自动纠正（玩家不必手动改）', () => {
+    expect(normalizeAdvisorSettings({ model: 'deepseek_flash' }).model).toBe('deepseek-flash')
+  })
+
+  it('不认识的自定义模型名原样保留（不能拿白名单把玩家的自建网关卡死）', () => {
+    expect(normalizeAdvisorSettings({ model: 'my-local-model' }).model).toBe('my-local-model')
+  })
+})
+
+describe('★ 超时：默认值要够推理模型用，且旧存档自动跟随', () => {
+  it('默认超时不是 3 秒（实测一次真实请求约 3.4 秒，3 秒必被掐断）', () => {
+    expect(DEFAULT_ADVISOR_SETTINGS.timeoutMs).toBeGreaterThanOrEqual(8_000)
+  })
+
+  it('★ 旧存档里的 3000（旧默认，从未在 UI 开放）自动升到新默认', () => {
+    expect(normalizeAdvisorSettings({ timeoutMs: 3_000 }).timeoutMs).toBe(DEFAULT_ADVISOR_SETTINGS.timeoutMs)
+  })
+
+  it('明确的自定义值（非旧默认）原样保留', () => {
+    expect(normalizeAdvisorSettings({ timeoutMs: 5_000 }).timeoutMs).toBe(5_000)
+  })
+})
+
 describe('isAdvisorUsable：开关 + key 两者缺一不可', () => {
   it('关着 → 不可用（即使有 key）', () => {
     expect(isAdvisorUsable({ ...DEFAULT_ADVISOR_SETTINGS, enabled: false, apiKey: 'sk-x' })).toBe(false)

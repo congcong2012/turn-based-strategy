@@ -323,6 +323,20 @@ describe('withAdvisor · 不变量 2：失败 ⇒ 静默回退', () => {
     expect(seen).toEqual([{ used: true, result: 'fallback' }])
   })
 
+  it('★ 客户端能报原因时，fallback 状态带上 reason（排查"开了却毫无反应"）', async () => {
+    const { inner } = makeInner()
+    const seen: AdvisorStatus[] = []
+    const client: AdvisorClient = {
+      requestPlan: async () => null,
+      lastFailure: () => 'HTTP 400',
+    }
+    const wrapped = withAdvisor(inner, { settings: settings(), client, onStatus: (s) => seen.push(s) })
+
+    await wrapped(makeTask())
+
+    expect(seen).toEqual([{ used: true, result: 'fallback', reason: 'HTTP 400' }])
+  })
+
   it('失败的结果不进缓存 ⇒ 下一次仍会重新问', async () => {
     const { inner } = makeInner()
     const { client, count } = makeClient([null, PLAN])

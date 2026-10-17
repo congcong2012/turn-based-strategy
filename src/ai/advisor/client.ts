@@ -27,9 +27,27 @@ import { parsePlan } from './plan'
 
 /** DeepSeek 的 OpenAI 兼容对话端点 */
 export const DEFAULT_ENDPOINT = 'https://api.deepseek.com/chat/completions'
-export const DEFAULT_MODEL = 'deepseek_flash'
-/** 硬超时：AI 单步之间本身有 450ms 间隔，3s 是"首拍前请求"的可接受上限 */
-export const DEFAULT_TIMEOUT_MS = 3_000
+/**
+ * 模型 id。
+ *
+ * ⚠️ **必须用连字符 `deepseek-flash`** —— DeepSeek 网关里没有下划线写法，
+ * `deepseek_flash` 会被拒（400/404），而本层契约是"失败一律返回 null"，
+ * 于是表现成**参谋永远静默回退**、界面上没有任何提示（v1.6.0 的真实线上 bug）。
+ * 可用值以 `GET /models` 为准（当前：`deepseek-flash` / `deepseek-v4-pro`）。
+ */
+export const DEFAULT_MODEL = 'deepseek-flash'
+/**
+ * 硬超时。
+ *
+ * ⚠️ 为什么不是 3 秒（v1.6.0 的初值）：`deepseek-flash` 是**推理模型**，
+ * 一次真实请求实测约 **3.4 秒**（纯版 252 提示 token，419 推理 token + 62 正文 token）。
+ * 3 秒会在返回前就 AbortController.abort()，而本层"失败即静默"，于是表现成
+ * "开了参谋毫无反应" —— 和模型名写错时的症状一模一样（两个 bug 叠在一起）。
+ *
+ * 10 秒的依据：给慢网/长摘要留 3 倍余量；同时它是"AI 首拍前的等待上限"，
+ * 断网时每回合最多多等 10 秒（之后照常按原档走），不会卡死。
+ */
+export const DEFAULT_TIMEOUT_MS = 10_000
 
 export interface AdvisorClientOptions {
   /** 完整对话端点（不含 `/chat/completions` 的 base_url 由调用方拼好） */
@@ -49,6 +67,15 @@ export interface AdvisorClient {
    * @param user   user prompt（局面摘要）
    */
   requestPlan: (system: string, user: string) => Promise<AdvisorPlan | null>
+  /**
+   * 最近一次失败的原因（**仅用于诊断**；成功时返回 null）。
+   *
+   * 为什么需要它：本模块刻意"失败即静默"，否则 LLM 的任何抖动都会变成玩家的报错弹窗。
+   * 但完全没有痕迹的静默会让排查变成猜谜 —— 例如模型 id 写错时，
+   * 现象只是"参谋好像没生效"，看不出是 400。有了这条，`__atPve.advisorStatus().reason`
+   * 就能直接说出 `HTTP 400` / 超时 / 解析失败。
+   */
+  lastFailure?: () => string | null
 }
 
 /**
@@ -104,10 +131,20 @@ export function createAdvisorClient(options: AdvisorClientOptions): AdvisorClien
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const doFetch = options.fetchImpl ?? globalThis.fetch
 
+  /** 最近一次失败原因（诊断用；成功时清空） */
+  let lastFailure: string | null = null
+
   async function requestPlan(system: string, user: string): Promise<AdvisorPlan | null> {
+    lastFailure = null
     // 没配 key：不发请求（也就不会有任何网络流量）
-    if (!options.apiKey.trim()) return null
-    if (typeof doFetch !== 'function') return null
+    if (!options.apiKey.trim()) {
+      lastFailure = '未配置 API Key'
+      return null
+    }
+    if (typeof doFetch !== 'function') {
+      lastFailure = '当前环境没有 fetch'
+      return null
+    }
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -132,20 +169,32 @@ export function createAdvisorClient(options: AdvisorClientOptions): AdvisorClien
         signal: controller.signal,
       })
 
-      if (!response.ok) return null
+      if (!response.ok) {
+        lastFailure = `HTTP ${response.status}`
+        return null
+      }
 
       const payload: unknown = await response.json()
       const content = extractContent(payload)
-      if (content === null) return null
+      if (content === null) {
+        lastFailure = '响应里没有 choices[0].message.content'
+        return null
+      }
 
-      return parsePlan(extractJson(content))
-    } catch {
+      const plan = parsePlan(extractJson(content))
+      if (!plan) {
+        lastFailure = '返回内容不是合法的计划 JSON'
+        return null
+      }
+      return plan
+    } catch (err) {
       // 超时（AbortError）/ 无网 / CORS / DNS / 坏 JSON —— 一律视作"这次没参谋"
+      lastFailure = err instanceof Error ? err.message : String(err)
       return null
     } finally {
       clearTimeout(timer)
     }
   }
 
-  return { requestPlan }
+  return { requestPlan, lastFailure: () => lastFailure }
 }

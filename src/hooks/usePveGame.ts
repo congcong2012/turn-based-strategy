@@ -84,6 +84,27 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
   const advisorWrappedRef = useRef<AiThinker | null>(null)
 
   /**
+   * ★ 每开一局都必须**重新装配**参谋层。
+   *
+   * `withAdvisor` 在装配时读一次设置（"一局之内配置稳定"是刻意设计），
+   * 于是这个 ref 一旦建立，就会把**当时**的设置一路沿用下去。
+   * 不重置的后果是真实踩到的 bug（2026-10-17 用户反馈"开了参谋但 API 没收到任何请求"）：
+   *
+   *   先不开参谋打一局 → 退出 → 开启参谋再开一局
+   *   ⇒ 参谋层仍是"关闭"的那个实例，**一个请求都不会发**。
+   *      而 `advisorEnabled()` 是现读 localStorage，所以它显示 `true`，
+   *      排查时极具迷惑性（看着是开的，实际这条链根本没接上）。
+   *
+   * 顺带修掉一个同源问题：缓存 Map 也活在包装器闭包里，
+   * 不重置会让上一局的 `playerId:round:turnIndex:phase`（尤其 `0:0:DEPLOY`）
+   * 命中共键，把上一局的倾向复用进新的一局。
+   */
+  const resetAdvisor = useCallback(() => {
+    advisorWrappedRef.current = null
+    advisorStatusRef.current = null
+  }, [])
+
+  /**
    * AI 思考的执行链：**参谋（可选）→ Worker → 主线程**。
    *
    * 层次与职责：
@@ -93,7 +114,8 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
    *   2. `createAiWorkerClient`：把（可能已被参谋改过档案的）task 送到 Worker 算。
    *
    * ⚠️ 设置由 `withAdvisor` 在**装配时**读一次：一局之内参谋配置稳定。
-   *    玩家在设置页改完再开的新局会重新装配，因此改动依然能生效。
+   *    因此**换局时必须调 `resetAdvisor()`**（`start` / `restart` / 恢复存档三处都调了），
+   *    否则沿用上一局的旧设置 —— 见 `resetAdvisor` 的注释。
    */
   const aiThink = useCallback<AiThinker>((task) => {
     if (!aiClientRef.current) {
@@ -211,6 +233,8 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
       setHasSave(false)
       return
     }
+    // 从存档恢复也是"新的一局"：按当前设置重新装配参谋层
+    resetAdvisor()
     const session = createPveSession({
       restore: { config: snapshot.config, state: snapshot.state, journal: snapshot.journal },
       aiThink,
@@ -221,28 +245,33 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
     setConfig(snapshot.config)
     setView(session.getView())
     setHasSave(false)
-  }, [resumeWhen, persist, aiThink])
+  }, [resumeWhen, persist, aiThink, resetAdvisor])
 
   // ---------------------------------------------------------------- 生命周期
 
   const start = useCallback(
     (next: PveConfig) => {
       disposeSession()
+      // ★ 换局必须重新装配参谋层（否则沿用上一局的旧设置，见 resetAdvisor 注释）。
+      //   注意要放在 createPveSession 之前：构造函数的 pumpDeploy 会立刻走一次 think。
+      resetAdvisor()
       const session = createPveSession({ config: next, aiThink, onChange: setView, onPersist: persist })
       sessionRef.current = session
       setConfig(next)
       setView(session.getView())
       setHasSave(false)
     },
-    [disposeSession, persist, aiThink],
+    [disposeSession, persist, aiThink, resetAdvisor],
   )
 
   const restart = useCallback(() => {
     const session = sessionRef.current
     if (!session) return
+    // 再来一局同样是新的一局：重置参谋层（同时也清掉上一局的回合缓存）
+    resetAdvisor()
     session.restart()
     setView(session.getView())
-  }, [])
+  }, [resetAdvisor])
 
   const exit = useCallback(() => {
     // 先取消待写的节流，再清档 —— 否则刚清掉的档会被挂起的 flush 又写回去

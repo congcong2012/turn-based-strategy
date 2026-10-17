@@ -169,6 +169,37 @@ describe('★ createAdvisorClient · 所有失败路径都返回 null（不抛�
     expect(await client.requestPlan('s', 'u')).toBeNull()
   })
 
+  describe('失败原因可追溯（lastFailure，仅诊断用，不影响返回值）', () => {
+    it('★ HTTP 400（典型：模型 id 写错 / key 无效）→ 报告状态码', async () => {
+      const fetchImpl = fakeFetch(() => ({ ok: false, status: 400, json: async () => ({}) }) as unknown as Response)
+      const client = createAdvisorClient({ apiKey: 'k', fetchImpl })
+      expect(await client.requestPlan('s', 'u')).toBeNull()
+      expect(client.lastFailure?.()).toBe('HTTP 400')
+    })
+
+    it('网络抛错 → 报告原始错误信息（超时会走到这里）', async () => {
+      const fetchImpl = fakeFetch(() => {
+        throw new TypeError('Failed to fetch')
+      })
+      const client = createAdvisorClient({ apiKey: 'k', fetchImpl })
+      await client.requestPlan('s', 'u')
+      expect(client.lastFailure?.()).toBe('Failed to fetch')
+    })
+
+    it('成功一次之后 lastFailure 被清空（不把旧错误一直挂着）', async () => {
+      let fail = true
+      const fetchImpl = fakeFetch(() =>
+        fail ? ({ ok: false, status: 500, json: async () => ({}) } as unknown as Response) : okResponse(PLAN_JSON),
+      )
+      const client = createAdvisorClient({ apiKey: 'k', fetchImpl })
+      await client.requestPlan('s', 'u')
+      expect(client.lastFailure?.()).toBe('HTTP 500')
+      fail = false
+      expect(await client.requestPlan('s', 'u')).not.toBeNull()
+      expect(client.lastFailure?.()).toBeNull()
+    })
+  })
+
   it('★ 超时 → null（用假定时器精确驱动，且不留悬挂句柄）', async () => {
     vi.useFakeTimers()
     try {

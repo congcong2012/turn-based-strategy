@@ -236,6 +236,99 @@ test.describe('AI 参谋 · 关闭时对局零变化（离线）', () => {
   })
 })
 
+test.describe('AI 参谋 · 开启后真的会请求（离线探针）', () => {
+  /**
+   * 这里守的是一个**真实踩到过的 bug**（2026-10-17 用户反馈"选了困难 + 开启参谋，
+   * 我的 API key 一次请求都没收到"）。
+   *
+   * 根因：参谋层（`withAdvisor`）在**装配时**读一次设置，而 React 里那个包装器
+   * 存在 `useRef` 里、整个页面生命周期只装配一次。于是
+   *   先不开参谋打一局 → 退出 → 开启参谋再开一局
+   * 参谋层仍是"关闭"的那个旧实例，**一个请求都不会发**；偏偏
+   * `__atPve.advisorEnabled()` 是现读 localStorage，会显示 `true` —— 极具迷惑性。
+   *
+   * 做法：把「接口地址」指到**同源**路径并用 `page.route` 拦截，
+   * 于是既不需要外网、也不会撞 CORS/preflight（跨源会先发 OPTIONS，用例就脆了）。
+   */
+  const PLAN = {
+    aggression: 'high',
+    economy: 'high',
+    defense: 'low',
+    focusFire: 'high',
+    counterPick: 'medium',
+    risk: 'low',
+    note: 'e2e-probe',
+  }
+
+  test('★ 同一页面：先不开参谋打一局 → 退出 → 开启参谋再开一局，必须真的发请求', async ({ page }) => {
+    const posts: string[] = []
+    await page.route('**/advisor-probe/chat/completions', async (route) => {
+      posts.push(route.request().postData() ?? '')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(PLAN) } }] }),
+      })
+    })
+
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(e.message))
+
+    // ── 第一局：不开参谋（默认即关闭）────────────────────────────────
+    await openPveSetup(page)
+    await expect(page.getByTestId('pve-advisor-enabled')).not.toBeChecked()
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-difficulty-hard').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.locator('.board-host canvas')).toBeVisible()
+
+    // 给 AI 部署留出时间：此时参谋关闭，必须**一个请求都没有**
+    await page.waitForTimeout(1_200)
+    expect(posts).toEqual([])
+
+    // ── 退出 → 回主页 → 重进设置页 ────────────────────────────────
+    await page.getByTestId('leave-button').click()
+    await page.getByTestId('entry-pve').click()
+    await expect(page.getByTestId('pve-setup')).toBeVisible()
+
+    // ── 第二局：开启参谋，接口地址指向同源探针 ──────────────────────
+    const origin = await page.evaluate(() => location.origin)
+    await page.getByTestId('pve-advisor-enabled').check()
+    await page.getByTestId('pve-advisor-key').fill('sk-e2e-probe-key')
+    await page.getByTestId('pve-advisor-advanced-toggle').click()
+    await page.getByTestId('pve-advisor-baseurl').fill(origin + '/advisor-probe')
+
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-difficulty-hard').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.locator('.board-host canvas')).toBeVisible()
+
+    // ★ 核心断言：换局后参谋层重新装配过，请求真的发出去了
+    await expect.poll(() => posts.length, { timeout: 20_000 }).toBeGreaterThan(0)
+
+    // 而且请求体里带上了 key 与模型（证明走的是设置里那一份，不是默认空值）
+    const body = JSON.parse(posts[0]) as { model?: string; messages?: unknown[] }
+    expect(typeof body.model).toBe('string')
+    expect(body.model?.length).toBeGreaterThan(0)
+    expect(body.messages?.length).toBeGreaterThanOrEqual(2)
+
+    // 拿到计划 ⇒ 状态是 ok（不是失败的 fallback）
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const at = (globalThis as unknown as { __atPve?: { advisorStatus?: () => { result?: string } | null } })
+              .__atPve
+            return at?.advisorStatus?.()?.result ?? null
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe('ok')
+
+    expect(errors).toEqual([])
+  })
+})
+
 test.describe('AI 参谋 · 真实调用（@network，需要 ADVISOR_API_KEY）', () => {
   /**
    * 真实连通测试：从环境变量读密钥。
@@ -262,7 +355,7 @@ test.describe('AI 参谋 · 真实调用（@network，需要 ADVISOR_API_KEY）'
             enabled: true,
             apiKey: key,
             baseUrl: 'https://api.deepseek.com',
-            model: 'deepseek_flash',
+            model: 'deepseek-flash',
             timeoutMs: 3000,
           }),
         )
@@ -280,19 +373,27 @@ test.describe('AI 参谋 · 真实调用（@network，需要 ADVISOR_API_KEY）'
     await expect(page.locator('.board-host canvas')).toBeVisible()
     await finishHumanDeploy(page)
 
-    // 参谋层要么成功（ok）要么静默回退（fallback），但**绝不能**让对局崩掉。
+    // ★ 必须真的拿到计划（`ok`），**不是**"不崩就行"。
+    //
+    // 这条断言原本写的是 `not.toBeNull()` —— 结果 `fallback` 也算通过，
+    // 于是 v1.6.0 的两个致命 bug（模型 id 写成下划线、3 秒超时掐断推理模型）
+    // 全都测不出来：线上表现是"开了参谋毫无反应"，而这条用例照样绿。
+    // 现在收紧成 `ok`：它才真正回答"整条链路通不通"。
     await expect
       .poll(
         () =>
           page.evaluate(() => {
             const at = (globalThis as unknown as {
-              __atPve?: { advisorStatus?: () => { result?: string } | null }
+              __atPve?: { advisorStatus?: () => { result?: string; reason?: string } | null }
             }).__atPve
-            return at?.advisorStatus?.()?.result ?? null
+            const s = at?.advisorStatus?.()
+            // 把失败原因带进日志，这样红的时候一眼能看出是 HTTP 400 / 超时 / 解析失败
+            if (s && s.result === 'fallback') console.warn('[advisor] fallback:', s.reason ?? '(无原因)')
+            return s?.result ?? null
           }),
-        { timeout: 25_000 },
+        { timeout: 40_000 },
       )
-      .not.toBeNull()
+      .toBe('ok')
 
     // 失败必须只表现为"回退"，而不是异常
     expect(errors).toEqual([])

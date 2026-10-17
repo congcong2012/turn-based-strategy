@@ -29,6 +29,29 @@ import { DEFAULT_ENDPOINT, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS } from './client'
 
 export const ADVISOR_STORAGE_KEY = 'ancient-tactics.advisor'
 
+/**
+ * 历史模型名 → 正式 id 的自愈映射。
+ *
+ * v1.6.0 把默认模型写成了 `deepseek_flash`（下划线），而 DeepSeek 网关只有
+ * `deepseek-flash`（连字符）。非法 id 会被拒，客户端又是"失败一律静默"，
+ * 玩家看到的现象就是"开了参谋毫无反应"。
+ *
+ * 这里做**读取时映射**而不是"只改默认值"：已经存进 localStorage 的旧值
+ * 也要能自动纠正，玩家不必手动去高级项里改（老配置零迁移的同一原则）。
+ */
+const MODEL_ALIASES: Record<string, string> = {
+  deepseek_flash: 'deepseek-flash',
+}
+
+/**
+ * v1.6.0 的默认超时（3 秒）。
+ *
+ * 这个字段**从未在界面上开放过**，所以存档里出现 3000 只可能是旧默认值 ——
+ * 一律跟着新默认走（否则老玩家升级后仍会卡在"3 秒必被掐断"的行为上）。
+ * 依据见 `client.ts` 里 `DEFAULT_TIMEOUT_MS` 的注释：实测一次真实请求约 3.4 秒。
+ */
+const LEGACY_DEFAULT_TIMEOUT_MS = 3_000
+
 /** Key 的最大长度（防手滑粘贴出一整篇文章） */
 const MAX_KEY_LENGTH = 512
 const MAX_BASE_URL_LENGTH = 256
@@ -67,14 +90,19 @@ export function normalizeAdvisorSettings(raw: unknown): AdvisorSettings {
   const obj = raw as Record<string, unknown>
 
   const timeout = obj.timeoutMs
+  const rawModel = asString(obj.model, base.model, MAX_MODEL_LENGTH).trim() || base.model
   return {
     enabled: typeof obj.enabled === 'boolean' ? obj.enabled : base.enabled,
     apiKey: asString(obj.apiKey, base.apiKey, MAX_KEY_LENGTH).trim(),
     baseUrl: asString(obj.baseUrl, base.baseUrl, MAX_BASE_URL_LENGTH).trim() || base.baseUrl,
-    model: asString(obj.model, base.model, MAX_MODEL_LENGTH).trim() || base.model,
+    // 旧版本存下的非法别名在这里自动纠正（见 MODEL_ALIASES）
+    model: MODEL_ALIASES[rawModel] ?? rawModel,
     timeoutMs:
       typeof timeout === 'number' && Number.isFinite(timeout) && timeout >= 500 && timeout <= 30_000
-        ? Math.floor(timeout)
+        ? // 旧默认值跟着新默认走（见 LEGACY_DEFAULT_TIMEOUT_MS）
+          Math.floor(timeout) === LEGACY_DEFAULT_TIMEOUT_MS
+          ? base.timeoutMs
+          : Math.floor(timeout)
         : base.timeoutMs,
   }
 }
