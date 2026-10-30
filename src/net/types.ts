@@ -64,6 +64,17 @@ export type Wire =
    * ⚠️ 别改成"只发增量"：客户端手上的事件流在刷新后本就不完整，增量一定会少算（见 game/journal 的说明）。
    */
   | { t: 'game'; from: PlayerId; state: GameState; events?: GameEvent[]; rounds?: LogRound[] }
+  /**
+   * 房主把**本局用到的自制地图**推给对端（载荷是 `ATM1:` 分享码）。
+   *
+   * 为什么需要它：以前房主在大厅选了自制图，其他玩家必须先用微信之类把分享码发过去、
+   * 手动导入，否则开局后会停在「缺少这张地图」。现在开局（以及每次 hello 补发）时自动推一份，
+   * 对端校验后直接落盘 + 注册 ⇒ 双方看到同一张图，不再需要任何场外沟通。
+   *
+   * 为什么复用分享码而不是裸 JSON：分享码已经解决了**编解码、合法性校验、保留原 id**
+   * 这三件事，且体积只有几百字符；自动分发与手动粘贴因此走**完全相同**的解析路径。
+   */
+  | { t: 'map'; from: PlayerId; code: string }
   | { t: 'cmd'; from: PlayerId; cmd: Command }
   | { t: 'cmdRejected'; from: PlayerId; code: ErrorCode }
   | { t: 'hello'; from: PlayerId; nickname: string; joinedAt: number; spectator?: boolean }

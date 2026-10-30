@@ -131,7 +131,7 @@ test('自制地图能直接开局，且刷新后仍能恢复（地图在启动�
   expect(errors).toEqual([])
 })
 
-test('自制地图能联机：分享码让双方拿到同一张图；没导入的一方有明确的补装入口', async ({ context }) => {
+test('★ 自制地图自动联机：客机没导入过也能开局（房主开局时自动推送，无需场外发分享码）', async ({ context }) => {
   const host = await context.newPage()
   const guest = await context.newPage()
   const problems: string[] = []
@@ -177,16 +177,21 @@ test('自制地图能联机：分享码让双方拿到同一张图；没导入�
   await host.getByTestId('start-button').click()
   await expect(host.getByTestId('phase-label')).toHaveText('部署')
 
-  // 5) 客机没导入这张图 → 不该白屏，而是给出"粘贴分享码"的出路
-  await expect(guest.getByTestId('missing-map')).toBeVisible()
-  await expect(guest.getByTestId('missing-map')).toContainText(mapId)
-
-  // 6) 粘分享码 → 直接接上这一局（地图 id 一致，双方是同一张图）
-  await guest.getByTestId('missing-map-input').fill(shareCode)
-  await guest.getByTestId('missing-map-load').click()
+  // 5) ★ 客机**从未导入**这张图，但开局时房主自动推过来了 ⇒ 直接进对局，不该卡在「缺少这张地图」
+  //    （以前这里必须让玩家私聊发分享码；现在只剩"房主已离开"时才会用到那个兜底面板）
   await expect(guest.getByTestId('phase-label')).toHaveText('部署')
+  await expect(guest.getByTestId('missing-map')).toHaveCount(0)
   expect((await gameState(guest)).mapId).toBe(mapId)
   expect((await gameState(host)).mapId).toBe(mapId)
+
+  // 6) 收到即落盘：客机本机的地图存储里也有了（刷新后不必再向房主要一次）
+  const guestMaps = await guest.evaluate(() => {
+    const raw = JSON.parse(window.localStorage.getItem('ancient-tactics.maps') ?? '{}') as {
+      maps?: Array<{ id: string }>
+    }
+    return (raw.maps ?? []).map((m) => m.id)
+  })
+  expect(guestMaps).toContain(mapId)
 
   expect(problems).toEqual([])
 })

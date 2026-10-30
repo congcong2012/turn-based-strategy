@@ -41,7 +41,8 @@ import type { GameStorage } from './gameStore'
 import { MAX_AI_STEPS, nextCommand, resolveDifficulty } from '../ai'
 import type { Difficulty } from '../ai'
 import { applyCommand } from '../game/commands'
-import { defaultMapFor } from '../game/data'
+import { defaultMapFor, getMap, hasMap } from '../game/data'
+import { decodeShareCode, encodeShareCode, isUserMapId, upsertUserMap } from '../app/mapStore'
 import { describeErrorCode } from '../game/errorText'
 import { appendJournal, emptyJournal } from '../game/journal'
 import type { Journal, LoggedEvent, LogRound } from '../game/journal'
@@ -658,6 +659,27 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   }
 
   /**
+   * 把本局用到的**自制地图**推给对端（内置地图不发：对端本来就有）。
+   *
+   * 传 `peerId` = 只发给那一个人（hello 补发：中途加入 / 刷新重连）；
+   * 不传 = 广播（开局时）。
+   *
+   * 三个刻意的选择：
+   *  1. **载荷用 `ATM1:` 分享码**，不是裸 JSON —— 复用已有的编解码与合法性校验，
+   *     自动分发与"手动粘贴分享码"因此走同一条解析路径，不会出现两套规则。
+   *  2. **必须在 `game` 之前发**：客户端收到局面时若还没有这张图，会先闪一下
+   *     「缺少这张地图」再跳回来（虽然能自愈，但观感很差）。
+   *  3. 地图不在本机时**静默跳过**（例如房主从别的机器恢复的存档）—— 对端仍有手动兜底。
+   */
+  function sendMapIfUserMap(peerId?: PeerId): void {
+    const mapId = game?.mapId
+    if (!mapId || !isUserMapId(mapId) || !hasMap(mapId)) return
+    const payload: Wire = { t: 'map', from: selfId, code: encodeShareCode(getMap(mapId)) }
+    if (peerId) transport?.send(payload, peerId)
+    else transport?.send(payload)
+  }
+
+  /**
    * 房主重连后恢复上一局：仅当持久化对局里的所有玩家都已回到房间时才恢复，
    * 恢复后立即把完整状态广播出去，客户端无缝继续。
    */
@@ -774,8 +796,12 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
           // 若对局已开始，补发完整快照（断线重连 / 中途加入）
           // ★ 连**完整战报**一起补发：这才是"刷新后还能回看整局"的关键 ——
           //   只补 state 的话，客户端手上的战报是空的（它没经历过之前那些事件）
-          if (game) transport?.send({ t: 'game', from: selfId, state: game, rounds: journal.rounds }, peerId)
-          else maybeRestoreGame()
+          // ★ 自制地图也要补：刷新后 client 的 localStorage 里通常已经有（收到时会落盘），
+          //   但换设备/换浏览器加入的人没有 —— 先发地图再发局面。
+          if (game) {
+            sendMapIfUserMap(peerId)
+            transport?.send({ t: 'game', from: selfId, state: game, rounds: journal.rounds }, peerId)
+          } else maybeRestoreGame()
           const known = hasPlayer(lobby, msg.from)
           // 观战者不占席位：房间满员时也放行（否则「满员也能观战」的承诺不成立）
           if (!known && msg.spectator !== true && isFull(lobby)) {
@@ -833,6 +859,21 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       }
       case 'cmdRejected': {
         recordError('指令被拒绝：' + describeErrorCode(msg.code))
+        break
+      }
+      case 'map': {
+        // 只接受**当前房主**发来的地图：与"房主权威"一致。
+        // 否则房间里任意一个 peer 都能往别人本机塞地图（既是越权，也是噪音来源）。
+        if (!isHost() && election?.hostId === msg.from) {
+          const decoded = decodeShareCode(msg.code)
+          if (decoded.ok) {
+            // 落盘 + 注册进运行时地图表 —— 与"手动粘贴分享码导入"是同一个动作，
+            // 于是本帧就能渲染出棋盘，刷新之后也还在。
+            upsertUserMap(decoded.map, storage)
+          } else {
+            recordError('房主发来的地图无法解析：' + decoded.errors.join('；'))
+          }
+        }
         break
       }
       case 'lobby': {
@@ -1193,6 +1234,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
         targetSlots > 0
           ? '进入部署阶段：' + targetSlots + ' 个席位由 AI 补位，在己方部署区放置初始部队'
           : '进入部署阶段：在己方部署区放置初始部队'
+      // ★ 先发地图、再发局面：否则对端会在"有局面但没地图"的那一帧闪出「缺少这张地图」
+      sendMapIfUserMap()
       transport?.send({ t: 'game', from: selfId, state: game, rounds: journal.rounds })
       broadcastLobby()
       emit()
