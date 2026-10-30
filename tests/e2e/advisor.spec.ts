@@ -200,6 +200,8 @@ test.describe('AI 参谋 · 关闭时对局零变化（离线）', () => {
     // 给 AI 排程留一点时间，然后断言"没有任何外网请求"
     await page.waitForTimeout(1_500)
     expect(external).toEqual([])
+    // 未开启时连「军师提示」这一块都不该出现（默认路径界面零变化）
+    await expect(page.getByTestId('advisor-hint')).toHaveCount(0)
   })
 
   test('未开参谋时对局能正常推进（部署 → 行动），不因参谋层而卡死', async ({ page }) => {
@@ -326,6 +328,155 @@ test.describe('AI 参谋 · 开启后真的会请求（离线探针）', () => {
       .toBe('ok')
 
     expect(errors).toEqual([])
+  })
+})
+
+test.describe('AI 参谋 · 测试连接（离线探针）', () => {
+  /** 打开设置页并填好 key（不填 baseUrl，交给各用例决定） */
+  async function prepare(page: Page): Promise<void> {
+    await openPveSetup(page)
+    await page.getByTestId('pve-advisor-enabled').check()
+    await page.getByTestId('pve-advisor-key').fill('sk-e2e-probe-key')
+    await page.getByTestId('pve-advisor-advanced-toggle').click()
+  }
+
+  test('★ 成功时直接回显耗时与模型（不必开局就知道能不能用）', async ({ page }) => {
+    await page.route('**/probe-ok/chat/completions', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }),
+      }),
+    )
+
+    await prepare(page)
+    const origin = await page.evaluate(() => location.origin)
+    await page.getByTestId('pve-advisor-baseurl').fill(origin + '/probe-ok')
+
+    await page.getByTestId('pve-advisor-test').click()
+
+    const result = page.getByTestId('pve-advisor-probe-result')
+    await expect(result).toBeVisible()
+    await expect(result).toContainText('连接正常')
+    await expect(result).toContainText('deepseek-flash')
+  })
+
+  test('★ 失败时给出可读原因（密钥无效），而不是一句"失败"', async ({ page }) => {
+    await page.route('**/probe-401/chat/completions', (route) =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
+    )
+
+    await prepare(page)
+    const origin = await page.evaluate(() => location.origin)
+    await page.getByTestId('pve-advisor-baseurl').fill(origin + '/probe-401')
+
+    await page.getByTestId('pve-advisor-test').click()
+
+    const result = page.getByTestId('pve-advisor-probe-result')
+    await expect(result).toBeVisible()
+    await expect(result).toContainText('密钥无效')
+    await expect(result).toContainText('401')
+  })
+
+  test('没填 key 时按钮不可点（避免发无意义的请求）', async ({ page }) => {
+    await openPveSetup(page)
+    await page.getByTestId('pve-advisor-enabled').check()
+    await expect(page.getByTestId('pve-advisor-test')).toBeDisabled()
+
+    await page.getByTestId('pve-advisor-key').fill('sk-x')
+    await expect(page.getByTestId('pve-advisor-test')).toBeEnabled()
+  })
+
+  test('改了设置后旧结论立即清空（不会拿过期结果误导人）', async ({ page }) => {
+    await page.route('**/probe-stale/chat/completions', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }),
+      }),
+    )
+
+    await prepare(page)
+    const origin = await page.evaluate(() => location.origin)
+    await page.getByTestId('pve-advisor-baseurl').fill(origin + '/probe-stale')
+    await page.getByTestId('pve-advisor-test').click()
+    await expect(page.getByTestId('pve-advisor-probe-result')).toBeVisible()
+
+    // 改一个字段 → 旧结论必须消失
+    await page.getByTestId('pve-advisor-model').fill('another-model')
+    await expect(page.getByTestId('pve-advisor-probe-result')).toHaveCount(0)
+  })
+})
+
+test.describe('AI 参谋 · 对局内的军师提示', () => {
+  const PLAN = {
+    aggression: 'high',
+    economy: 'medium',
+    defense: 'low',
+    focusFire: 'high',
+    counterPick: 'medium',
+    risk: 'low',
+    note: '抢占高地，集火长枪',
+  }
+
+  test('★ 开启后对局中能看到"军师这一回合想怎么打"（含倾向标签）', async ({ page }) => {
+    await page.route('**/probe-hud/chat/completions', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(PLAN) } }] }),
+      }),
+    )
+
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(e.message))
+
+    await openPveSetup(page)
+    const origin = await page.evaluate(() => location.origin)
+    await page.getByTestId('pve-advisor-enabled').check()
+    await page.getByTestId('pve-advisor-key').fill('sk-e2e-probe-key')
+    await page.getByTestId('pve-advisor-advanced-toggle').click()
+    await page.getByTestId('pve-advisor-baseurl').fill(origin + '/probe-hud')
+
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-difficulty-hard').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.locator('.board-host canvas')).toBeVisible()
+
+    const hint = page.getByTestId('advisor-hint')
+    await expect(hint).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByTestId('advisor-hint-text')).toContainText('抢占高地')
+    // 标签从计划推导：aggression high → 进攻↑，focusFire high → 集火
+    await expect(page.getByTestId('advisor-hint-tag').first()).toBeVisible()
+    await expect(hint).toContainText('进攻↑')
+    await expect(hint).toContainText('集火')
+
+    expect(errors).toEqual([])
+  })
+
+  test('军师失败时明说"未响应 + 原因"，不让玩家误以为它在起作用', async ({ page }) => {
+    await page.route('**/probe-bad/chat/completions', (route) =>
+      route.fulfill({ status: 400, contentType: 'application/json', body: '{}' }),
+    )
+
+    await openPveSetup(page)
+    const origin = await page.evaluate(() => location.origin)
+    await page.getByTestId('pve-advisor-enabled').check()
+    await page.getByTestId('pve-advisor-key').fill('sk-e2e-probe-key')
+    await page.getByTestId('pve-advisor-advanced-toggle').click()
+    await page.getByTestId('pve-advisor-baseurl').fill(origin + '/probe-bad')
+
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-difficulty-hard').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.locator('.board-host canvas')).toBeVisible()
+
+    const hint = page.getByTestId('advisor-hint')
+    await expect(hint).toBeVisible({ timeout: 25_000 })
+    await expect(hint).toContainText('未响应')
+    await expect(hint).toContainText('模型名')
+    // 失败时不该有倾向标签（不能摆出一副"军师已生效"的样子）
+    await expect(page.getByTestId('advisor-hint-tag')).toHaveCount(0)
   })
 })
 

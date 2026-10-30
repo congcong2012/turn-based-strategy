@@ -22,6 +22,9 @@ import {
   saveAdvisorSettings,
 } from '../ai/advisor/settings'
 import type { AdvisorSettings } from '../ai/advisor/settings'
+import { probeAdvisor } from '../ai/advisor/probe'
+import type { ProbeResult } from '../ai/advisor/probe'
+import { humanizeAdvisorReason } from './advisorText'
 import {
   DEFAULT_HARD_DIFFICULTY,
   HARD_MODE_OPTIONS,
@@ -69,6 +72,25 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
   const [advisor, setAdvisor] = useState<AdvisorSettings>(() => loadAdvisorSettings())
   /** 折叠的高级项（接口地址 / 模型） */
   const [showAdvanced, setShowAdvanced] = useState(false)
+  /** 最近一次「测试连接」的结果；改动任一设置都会被清空（旧结论立即失效） */
+  const [probe, setProbe] = useState<ProbeResult | null>(null)
+  const [probing, setProbing] = useState(false)
+
+  /**
+   * 「测试连接」：开局前发一次极小请求，把"静默失败"变成一眼可见的结论。
+   *
+   * 用**和实战完全相同**的客户端（`probeAdvisor` 内部复用 `createAdvisorClient`），
+   * 所以它能验证真正会出问题的那几项：key、接口地址、模型名、网络。
+   */
+  const runProbe = async () => {
+    setProbing(true)
+    setProbe(null)
+    try {
+      setProbe(await probeAdvisor(advisor))
+    } finally {
+      setProbing(false)
+    }
+  }
 
   /**
    * 改设置即存。
@@ -82,6 +104,8 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
     const next = { ...advisor, ...patch }
     setAdvisor(next)
     saveAdvisorSettings(next)
+    // 设置变了，上一次"连接正常"的结论就不再适用 —— 清掉，免得误导
+    setProbe(null)
   }
 
   const total = opponents + 1
@@ -312,6 +336,32 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
                 onChange={(e) => patchAdvisor({ apiKey: e.target.value })}
               />
             </label>
+
+            <div className="advisor-probe-row">
+              <button
+                type="button"
+                className="advisor-probe-button"
+                data-testid="pve-advisor-test"
+                disabled={probing || advisor.apiKey.trim().length === 0}
+                onClick={runProbe}
+              >
+                {probing ? '测试中…' : '测试连接'}
+              </button>
+              <span className="muted small">
+                先验一次再开局：省得打了一半才发现 key 或模型名不对。
+              </span>
+            </div>
+
+            {probe ? (
+              <p
+                className={'advisor-probe ' + (probe.ok ? 'ok' : 'bad')}
+                data-testid="pve-advisor-probe-result"
+              >
+                {probe.ok
+                  ? `✅ 连接正常（${probe.ms} ms）· 模型 ${probe.model ?? DEFAULT_MODEL}`
+                  : `❌ ${humanizeAdvisorReason(probe.reason)}`}
+              </p>
+            ) : null}
 
             <button
               type="button"

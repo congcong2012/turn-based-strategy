@@ -597,6 +597,39 @@ button.block { width: 100%; margin-bottom: 8px; }
 /* 面板里的说明文字较长：解除全局 nowrap 造成的横向溢出 */
 .pve-setup .advisor-panel p { white-space: normal; line-height: 1.6; }
 
+/* 「测试连接」行：按钮 + 一句提示。按钮自身 nowrap 无妨，提示要能换行 */
+.pve-setup .advisor-probe-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px;
+}
+.pve-setup .advisor-probe-row .muted { white-space: normal; line-height: 1.5; min-width: 0; }
+.pve-setup .advisor-probe-button { font-size: 12px; padding: 6px 12px; }
+
+/* 探测结论：成功用青铜金，失败用朱红；都要能换行且不撑破窄屏 */
+.pve-setup .advisor-probe {
+  margin: 0 0 10px; padding: 7px 10px; border-radius: var(--radius-s);
+  font-size: 12px; line-height: 1.55; white-space: normal;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+}
+.pve-setup .advisor-probe.ok { border-color: #6b5a2f; background: #2a2418; color: var(--gold-bright); }
+.pve-setup .advisor-probe.bad { border-color: #6b3a2c; background: #2c1e19; color: #f0c4b8; }
+
+/* 对局内的「军师提示」：紧贴思考提示条下方，像一条战场简令 */
+.advisor-hint {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 14px; font-size: 13px;
+  background: #241f16; border-bottom: 1px solid #4a3d26; color: #ecd9b4;
+}
+.advisor-hint.warn { background: #2a1d18; border-bottom-color: #6b3a2c; color: #f0c4b8; }
+.advisor-hint-title { flex: 0 0 auto; font-weight: 700; color: var(--gold-bright); }
+.advisor-hint.warn .advisor-hint-title { color: #f0a892; }
+/* 长句必须能换行：手机上「军师未响应：……」很容易超过一行 */
+.advisor-hint-text { flex: 1 1 220px; min-width: 0; white-space: normal; line-height: 1.5; }
+.advisor-tags { display: flex; gap: 6px; flex-wrap: wrap; flex: 0 0 auto; }
+.advisor-tag {
+  font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  background: #332a1f; border: 1px solid #4a3d26; color: #d9c49a; white-space: nowrap;
+}
+
 @media (max-width: 520px) {
   .home-header { padding-top: 12px; }
   .home-header h1 { font-size: 30px; letter-spacing: 5px; }

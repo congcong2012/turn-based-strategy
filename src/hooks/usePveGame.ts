@@ -43,6 +43,11 @@ export interface UsePveGameResult {
   view: RoomView | null
   actions: RoomActions
   config: PveConfig | null
+  /**
+   * 最近一次参谋结果（对局内 HUD 用）。未开启参谋时恒为 null ——
+   * 因此"关闭时零变化"这条不变量在渲染层同样成立。
+   */
+  advisorStatus: AdvisorStatus | null
   /** 正在从存档恢复（首帧占位，避免闪一下设置页） */
   resuming: boolean
   start: (config: PveConfig) => void
@@ -80,6 +85,15 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
   const aiFallbackRef = useRef<string | null>(null)
   /** 最近一次参谋工作结果（仅供 HUD / 观测；没有参谋时恒为 null） */
   const advisorStatusRef = useRef<AdvisorStatus | null>(null)
+  /**
+   * 参谋状态的可渲染副本。
+   *
+   * 为什么既要 ref 又要 state：ref 给 DEV/E2E 观测（`__atPve.advisorStatus()`），
+   * state 给对局内的「军师提示」用。**只在"回合级结果变化"时更新**：
+   * 同一回合内每一步都会回调一次 `onStatus`，但 `plan` 是同一个对象（回合缓存），
+   * 因此这里的 `prev.plan === next.plan` 判断会让 React 直接 bail out，不会每步重渲染。
+   */
+  const [advisorStatus, setAdvisorStatus] = useState<AdvisorStatus | null>(null)
   /** 参谋包装器：与 Worker 客户端同生命周期，只装配一次 */
   const advisorWrappedRef = useRef<AiThinker | null>(null)
 
@@ -102,6 +116,7 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
   const resetAdvisor = useCallback(() => {
     advisorWrappedRef.current = null
     advisorStatusRef.current = null
+    setAdvisorStatus(null)
   }, [])
 
   /**
@@ -131,6 +146,10 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
         settings: loadAdvisorSettings(),
         onStatus: (status) => {
           advisorStatusRef.current = status
+          // 同回合内 plan 是同一个对象 ⇒ 引用相同就原样返回，React 不会重渲染
+          setAdvisorStatus((prev) =>
+            prev && prev.result === status.result && prev.plan === status.plan ? prev : status,
+          )
         },
       })
     }
@@ -317,6 +336,7 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
     view,
     actions,
     config,
+    advisorStatus,
     resuming: resumeWhen && hasSave && view === null,
     start,
     restart,

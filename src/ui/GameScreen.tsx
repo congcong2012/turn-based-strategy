@@ -16,6 +16,8 @@ import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { isSoundOn, playSound, setSoundOn, soundForEvent } from './sound'
 import { EMPTY_TAP_STATE, isTouchDevice, nextTapState } from './tapConfirm'
 import { MOVE_TYPE_LABEL, attackKindLabel, rangeLabel } from './unitText'
+import { advisorHintOf } from './advisorText'
+import type { AdvisorStatus } from '../ai/advisor'
 import type { TapConfirmState } from './tapConfirm'
 import type { BoardView } from '../render/boardApp'
 
@@ -29,6 +31,13 @@ export interface GameScreenProps {
   mode?: 'online' | 'pve'
   /** 仅 pve：结算后"再来一局" */
   onRestart?: () => void
+  /**
+   * 仅 pve：AI 参谋最近一次结果。
+   *
+   * 为 null（未开启参谋 / 还没轮到电脑）时**不渲染任何东西** ——
+   * 保证"默认关闭 ⇒ 界面零变化"这条不变量在渲染层也成立。
+   */
+  advisorStatus?: AdvisorStatus | null
 }
 
 const ROLE_COLORS = ['#c65a44', '#4aa89b', '#d2a24b', '#9078c8']
@@ -42,8 +51,10 @@ function nameOf(view: RoomView, playerId: PlayerId): string {
   return view.players.find((p) => p.playerId === playerId)?.nickname ?? playerId.slice(0, 6)
 }
 
-export function GameScreen({ view, actions, mode = 'online', onRestart }: GameScreenProps) {
+export function GameScreen({ view, actions, mode = 'online', onRestart, advisorStatus }: GameScreenProps) {
   const game = view.game as GameState
+  /** 军师提示（未开启参谋时为 null，整块不渲染） */
+  const advisorHint = useMemo(() => advisorHintOf(advisorStatus ?? null), [advisorStatus])
   const [armedType, setArmedType] = useState<string | null>(null)
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null)
@@ -428,6 +439,29 @@ export function GameScreen({ view, actions, mode = 'online', onRestart }: GameSc
           <span className="muted small" data-testid="ai-thinking-elapsed">
             {thinkSeconds > 0 ? `已等待 ${thinkSeconds} 秒` : '请稍候'}
           </span>
+        </div>
+      ) : null}
+
+      {/* 单人模式 + AI 参谋：把"军师这一回合想怎么打"摊给玩家看。
+          以前参谋纯粹是个看不见的参数旋钮 —— 玩家无法判断它到底有没有起作用。 */}
+      {mode === 'pve' && advisorHint ? (
+        <div
+          className={'advisor-hint' + (advisorHint.tone === 'warn' ? ' warn' : '')}
+          data-testid="advisor-hint"
+        >
+          <span className="advisor-hint-title">🧭 敌方军师</span>
+          <span className="advisor-hint-text" data-testid="advisor-hint-text">
+            {advisorHint.text}
+          </span>
+          {advisorHint.tags.length > 0 ? (
+            <span className="advisor-tags">
+              {advisorHint.tags.map((tag) => (
+                <span className="advisor-tag" data-testid="advisor-hint-tag" key={tag}>
+                  {tag}
+                </span>
+              ))}
+            </span>
+          ) : null}
         </div>
       ) : null}
 

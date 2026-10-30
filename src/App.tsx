@@ -28,7 +28,15 @@ export default function App() {
   // 单人局优先级最高：一旦开局，联机会话与路由都不再影响画面
   // （这也是为什么单人模式不需要先 leave 联机会话 —— 它永远抢不到渲染权）
   if (pve.active && pve.view) {
-    return <GameScreen view={pve.view} actions={pve.actions} mode="pve" onRestart={pve.restart} />
+    return (
+      <GameScreen
+        view={pve.view}
+        actions={pve.actions}
+        mode="pve"
+        onRestart={pve.restart}
+        advisorStatus={pve.advisorStatus}
+      />
+    )
   }
 
   // 有存档正在恢复：先占位，避免闪一下设置页（存档是同步读的，所以这只是一帧的事）
