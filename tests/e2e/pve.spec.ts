@@ -61,6 +61,40 @@ async function gameState(page: Page) {
   }>
 }
 
+/**
+ * 等所有**非自己**的席位把兵摆完。
+ *
+ * 为什么需要这个等待：部署阶段自 v1.6.0 起走 `think`（为了支持"部署阶段也问一次参谋"），
+ * AI 变成**异步逐个**摆兵，不再像以前那样在会话构造时同步摆完。
+ * 因此"开局第一帧 AI 就已经部署完毕"这个假设**不再成立** ——
+ * 拿那一刻的兵力当基线，会偶发地把 AI 后续补上的 1–2 个兵算进"人类操作"里。
+ *
+ * 判据用状态里的 `deploy[playerId].done`，而不是"等够多少毫秒"或"数够几个兵"。
+ */
+async function waitAiDeployed(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const at = (
+            globalThis as unknown as {
+              __atGame?: {
+                getState: () => { players: string[]; deploy?: Record<string, { done?: boolean }> }
+                selfId?: string
+              }
+            }
+          ).__atGame
+          const state = at?.getState()
+          if (!state) return false
+          const others = state.players.filter((p) => p !== at?.selfId)
+          if (others.length === 0) return false
+          return others.every((p) => state.deploy?.[p]?.done === true)
+        }),
+      { timeout: 15_000 },
+    )
+    .toBe(true)
+}
+
 /** 进入单人练习设置页 */
 async function openPveSetup(page: Page): Promise<void> {
   await page.goto(localHomeUrl('pve-a', '甲将军'))
@@ -522,9 +556,9 @@ test.describe('单人练习（PVE）', () => {
       )
     const unitCount = async () => (await gameState(page)).units?.length ?? 0
 
-    // ★ AI 一开局就把自己的兵摆完了（默认 1 个对手 = 4 个兵），所以只能跟**基线**比，
-    //   不能断言绝对条数 —— 这一条第一次就写错了，白白查了半天。
-    await expect.poll(unitCount, { timeout: 10_000 }).toBeGreaterThanOrEqual(1)
+    // ★ AI 是**异步**逐个摆兵的（部署阶段走 think），所以必须先等它摆完再取基线。
+    //   以前这里只等"至少 1 个兵"，于是偶尔会把 AI 后补的兵算成人类的操作 —— 改为等 done 标记。
+    await waitAiDeployed(page)
     const baseline = await unitCount()
 
     // 1) 先用普通点击放一个兵到 (2,0)
