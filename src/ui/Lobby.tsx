@@ -99,6 +99,23 @@ export function Lobby({
   const [mode, setMode] = useState<'p2p' | 'manual'>('p2p')
 
   const inRoom = view.roomCode !== null && view.role !== 'idle' && (!view.manual || view.manual.phase === 'connected')
+  /** 输入框里有没有内容（留空 = 想开新房，这是"创建房间"的唯一判据） */
+  const codeFilled = code.trim().length > 0
+  const codeValid = isValidRoomCode(code)
+
+  /**
+   * 留空时点主按钮 = **创建房间**：随机码 + 直接进房。
+   *
+   * 为什么要这么改（走查 F6）：原来的面板叫「加入房间」，想当房主得先点「随机生成」
+   * 再点「加入房间」—— 第一次来的人不知道"我得先造一个码"。
+   * 但**只有留空时**才创建：如果已经输入了几位（例如只打了 4 位），
+   * 静默改成创建会让人以为连上了朋友那一房，所以那时按钮保持禁用并提示位数。
+   */
+  const createRoom = () => {
+    const next = randomRoomCode()
+    setCode(next)
+    actions.join(next, nickname, password.trim() || undefined)
+  }
 
   useEffect(() => {
     setRename(view.nickname)
@@ -147,22 +164,33 @@ export function Lobby({
       </header>
 
       <section className="panel">
-        <div className="status-line" data-testid="status-line">
-          <span>
-            信令：<b data-testid="strategy-label">{view.strategy === 'mqtt' ? 'MQTT' : 'Torrent'}</b>
-          </span>
-          <span>
-            连接：<b data-testid="connection-status">{STATUS_TEXT[view.status] ?? view.status}</b>
-          </span>
-          <span>
-            身份：<b data-testid="role-label">{ROLE_TEXT[view.role] ?? view.role}</b>
-          </span>
-          <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
-          <span>
-            在线 peer：<b data-testid="peer-count">{view.peerCount}</b>
-          </span>
-        </div>
-        {view.statusDetail ? <p className="muted small">详情：{view.statusDetail}</p> : null}
+        {/* 走查 F7：未入房时别把「信令 MQTT / peer：0」糊在第一屏 ——
+            第一次来的人第一眼应该是"我要做什么"，而不是技术参数。
+            一旦开始连接（connecting / failed / 已入房）就必须显示，否则出错时无从判断。 */}
+        {inRoom || view.status !== 'idle' ? (
+          <>
+            <div className="status-line" data-testid="status-line">
+              <span>
+                信令：<b data-testid="strategy-label">{view.strategy === 'mqtt' ? 'MQTT' : 'Torrent'}</b>
+              </span>
+              <span>
+                连接：<b data-testid="connection-status">{STATUS_TEXT[view.status] ?? view.status}</b>
+              </span>
+              <span>
+                身份：<b data-testid="role-label">{ROLE_TEXT[view.role] ?? view.role}</b>
+              </span>
+              <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
+              <span>
+                在线 peer：<b data-testid="peer-count">{view.peerCount}</b>
+              </span>
+            </div>
+            {view.statusDetail ? <p className="muted small">详情：{view.statusDetail}</p> : null}
+          </>
+        ) : (
+          <p className="muted small" data-testid="lobby-idle-hint">
+            还没加入房间：填一个 6 位房间码加入朋友的局，或直接点下面的「创建房间」开一局 —— 你会是房主。
+          </p>
+        )}
       </section>
 
       <ConnectionHelp
@@ -177,7 +205,7 @@ export function Lobby({
 
       {!inRoom ? (
         <section className="panel" data-testid="join-panel">
-          <h2>加入房间</h2>
+          <h2>加入 / 创建房间</h2>
           <label className="field">
             <span>昵称</span>
             <input
@@ -252,29 +280,43 @@ export function Lobby({
           </div>
 
           {mode === 'p2p' ? (
-            <div className="row">
-              <button
-                type="button"
-                className="primary"
-                data-testid="join-button"
-                disabled={!isValidRoomCode(code) || view.status === 'connecting'}
-                onClick={() => actions.join(code, nickname, password.trim() || undefined)}
-              >
-                加入房间
-              </button>
-              <button
-                type="button"
-                data-testid="spectate-button"
-                disabled={!isValidRoomCode(code) || view.status === 'connecting'}
-                onClick={() => actions.join(code, nickname, password.trim() || undefined, true)}
-              >
-                👁 观战
-              </button>
-              <span className="muted small">
-                同一个房间码 = 同一个房间；第一个进入的人自动成为房主，2–4 人均可开局。
-                「观战」不占席位、不能操作，只是看（房间满员时也能进）。
-              </span>
-            </div>
+            <>
+              <div className="row">
+                <button
+                  type="button"
+                  className="primary"
+                  data-testid="join-button"
+                  // 留空 = 创建房间（随机码 + 进房）；填了码但位数不对 = 禁用 + 提示
+                  disabled={view.status === 'connecting' || (codeFilled && !codeValid)}
+                  onClick={() =>
+                    codeValid
+                      ? actions.join(code, nickname, password.trim() || undefined)
+                      : createRoom()
+                  }
+                >
+                  {codeFilled ? '加入房间' : '创建房间'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="spectate-button"
+                  disabled={!codeValid || view.status === 'connecting'}
+                  onClick={() => actions.join(code, nickname, password.trim() || undefined, true)}
+                >
+                  👁 观战
+                </button>
+                <span className="muted small">
+                  {codeValid
+                    ? '同一个房间码 = 同一个房间；第一个进入的人自动成为房主，2–4 人均可开局。'
+                    : '留空直接点「创建房间」（你会是房主）；要加入朋友的局就填他给的 6 位房间码。'}
+                  「观战」不占席位、不能操作，只是看（房间满员时也能进）。
+                </span>
+              </div>
+              {codeFilled && !codeValid ? (
+                <p className="muted small warn-text" data-testid="room-code-hint">
+                  房间码需要 {ROOM_CODE_LENGTH} 位（清空则可以创建新房间）
+                </p>
+              ) : null}
+            </>
           ) : (
             <>
               <div className="row">

@@ -367,53 +367,62 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
   return (
     <div className="game-screen">
       <header className="game-hud">
-        <span className="hud-item">
-          回合 <b data-testid="round-label">{game.round}</b>
-        </span>
-        <span className="hud-item">
-          阶段 <b data-testid="phase-label">{isDeploy ? '部署' : isOver ? '结束' : '行动'}</b>
-        </span>
-        <span className="hud-item">
-          当前 <b data-testid="current-player" style={{ color: playerColor(game, currentPlayer) }}>
-            {nameOf(view, currentPlayer)}
-            {currentPlayer === view.selfId ? '（你）' : ''}
-          </b>
-        </span>
-        <span className="hud-item">
-          资金 <b data-testid="funds-label">{game.funds[view.selfId] ?? 0}</b>
-        </span>
-        <button type="button" data-testid="locate-button" onClick={locate} title="把镜头对准我的部署区 / 部队">
-          🎯 定位
-        </button>
-        <button
-          type="button"
-          data-testid="battle-log-button"
-          onClick={() => setShowBattleLog(true)}
-          title="回看整局战斗日志"
-        >
-          📜 日志
-        </button>
-        {mode === 'online' ? (
-          <>
-            <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
-            <span className="hud-item muted small">房间 {view.roomCode}</span>
-          </>
-        ) : (
-          <span className="hud-item muted small" data-testid="pve-badge">
-            单人练习
+        {/* 三个逻辑分组：状态 / 模式徽章 / 操作。
+            桌面端 `.hud-group { display: contents }` —— 子元素直接参与顶栏的 flex 排布，
+            与改造前逐字一致；窄屏才让它们各自成行，避免出现"只有一颗按钮被挤到第二行"。 */}
+        <span className="hud-group hud-status">
+          <span className="hud-item">
+            回合 <b data-testid="round-label">{game.round}</b>
           </span>
-        )}
-        {view.spectating ? (
-          <span className="hud-item" data-testid="spectator-badge" title="观战：不占席位、不能操作">
-            👁 观战中（只读）
+          <span className="hud-item">
+            阶段 <b data-testid="phase-label">{isDeploy ? '部署' : isOver ? '结束' : '行动'}</b>
           </span>
-        ) : null}
-        <button type="button" data-testid="sound-toggle" onClick={toggleSound} title="音效开关">
-          {soundOn ? '🔊 音效' : '🔇 静音'}
-        </button>
-        <button type="button" data-testid="leave-button" onClick={() => actions.leave()}>
-          {mode === 'pve' ? '退出对局' : '离开'}
-        </button>
+          <span className="hud-item">
+            当前 <b data-testid="current-player" style={{ color: playerColor(game, currentPlayer) }}>
+              {nameOf(view, currentPlayer)}
+              {currentPlayer === view.selfId ? '（你）' : ''}
+            </b>
+          </span>
+          <span className="hud-item">
+            资金 <b data-testid="funds-label">{game.funds[view.selfId] ?? 0}</b>
+          </span>
+        </span>
+        <span className="hud-group hud-badges">
+          {mode === 'online' ? (
+            <>
+              <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
+              <span className="hud-item muted small">房间 {view.roomCode}</span>
+            </>
+          ) : (
+            <span className="hud-item muted small" data-testid="pve-badge">
+              单人练习
+            </span>
+          )}
+          {view.spectating ? (
+            <span className="hud-item" data-testid="spectator-badge" title="观战：不占席位、不能操作">
+              👁 观战中（只读）
+            </span>
+          ) : null}
+        </span>
+        <span className="hud-group hud-actions">
+          <button type="button" data-testid="locate-button" onClick={locate} title="把镜头对准我的部署区 / 部队">
+            🎯 定位
+          </button>
+          <button
+            type="button"
+            data-testid="battle-log-button"
+            onClick={() => setShowBattleLog(true)}
+            title="回看整局战斗日志"
+          >
+            📜 日志
+          </button>
+          <button type="button" data-testid="sound-toggle" onClick={toggleSound} title="音效开关">
+            {soundOn ? '🔊 音效' : '🔇 静音'}
+          </button>
+          <button type="button" data-testid="leave-button" onClick={() => actions.leave()}>
+            {mode === 'pve' ? '退出对局' : '离开'}
+          </button>
+        </span>
       </header>
 
       {/* 观战者：任何阶段都给一条明确的只读说明（这不是错误提示，是模式说明） */}

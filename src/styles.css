@@ -233,6 +233,31 @@ button.danger:hover:not(:disabled) { border-color: var(--red); }
 }
 .hud-item { color: var(--muted); }
 .hud-item b { color: var(--text); }
+
+/* 顶栏的逻辑分组：桌面端"透明"，子元素直接参与 .game-hud 的 flex 排布（与改造前逐字一致） */
+.hud-group { display: contents; }
+
+/*
+ * 窄屏：顶栏按「状态行 / 徽章 + 操作行」两段排。
+ *
+ * 走查 F2：390px 宽时原来的单行 flex 会把「退出对局」单独折到第二行 ——
+ * 既占掉一整行高度，看着又像样式坏了。分组之后换行**只发生在两组之间**，
+ * 第二行是"徽章 + 四颗操作按钮"，不会再出现孤零零一颗按钮。
+ */
+@media (max-width: 560px) {
+  .game-hud { gap: 8px 10px; padding: 8px 10px; }
+  .hud-status {
+    display: flex; flex: 1 1 100%; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  }
+  .hud-badges { display: flex; flex: 0 1 auto; align-items: center; gap: 8px; min-width: 0; }
+  .hud-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; margin-left: auto; }
+  .hud-actions button { padding: 6px 10px; font-size: 12px; }
+  /* 昵称可能很长：截断而不是把整行顶开 */
+  .hud-status [data-testid='current-player'] {
+    display: inline-block; max-width: 30vw; overflow: hidden;
+    text-overflow: ellipsis; vertical-align: bottom;
+  }
+}
 .game-body { flex: 1; display: flex; min-height: 0; }
 .board-host { flex: 1; min-width: 0; position: relative; }
 .board-host canvas { display: block; width: 100%; height: 100%; }

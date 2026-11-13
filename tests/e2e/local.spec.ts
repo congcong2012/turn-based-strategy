@@ -146,5 +146,28 @@ test.describe('大厅（本地传输）', () => {
     await input.fill('ab1')
     await expect(input).toHaveValue('AB')
     await expect(page.getByTestId('join-button')).toBeDisabled()
+    // 填了一半时给出原因，并说明"清空就能创建"（走查 F6）
+    await expect(page.getByTestId('room-code-hint')).toBeVisible()
+  })
+
+  test('★ 留空直接「创建房间」：不必先点随机生成（走查 F6），首屏也不显示技术参数（F7）', async ({ page }) => {
+    // localUrl 自带 `page=lobby`，直接落在大厅
+    await page.goto(localUrl('cr-a', '开房的人'))
+    await expect(page.getByTestId('join-panel')).toBeVisible()
+
+    // F7：没进房前不该把「信令 / peer」糊在第一屏
+    await expect(page.getByTestId('lobby-idle-hint')).toBeVisible()
+    await expect(page.getByTestId('status-line')).toHaveCount(0)
+
+    const join = page.getByTestId('join-button')
+    await expect(join).toHaveText('创建房间')
+    await expect(join).toBeEnabled()
+    await join.click()
+
+    // 真的开了一间房：房间码出现，身份是房主
+    await expect(page.getByTestId('room-code-display')).toHaveText(/^[A-Z0-9]{6}$/)
+    await waitForHost(page)
+    // 进房后技术参数才出现（出问题时要靠它判断）
+    await expect(page.getByTestId('status-line')).toBeVisible()
   })
 })
