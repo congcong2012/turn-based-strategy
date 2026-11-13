@@ -8,6 +8,7 @@ import type { Application, Container } from 'pixi.js'
 import { DATA, getMap } from '../game/data'
 import type { GameData } from '../game/data'
 import type { GameState } from '../game/types'
+import { clampCameraOffset } from './camera'
 
 export const TILE = 48
 
@@ -432,8 +433,12 @@ export class BoardApp {
     const raw = Math.min(cw / w, ch / h)
     this.scale = Math.max(MIN_SCALE, Math.min(this.maxScale, raw))
     this.userInteracted = true
-    this.offsetX = cw / 2 - ((x0 + x1 + 1) / 2) * TILE * this.scale
-    this.offsetY = ch / 2 - ((y0 + y1 + 1) / 2) * TILE * this.scale
+    const { width, height } = this.boardSize()
+    // ★ 先居中、再收敛到地图边界：
+    //   部署区贴着地图最上/最下时，直接居中会让镜头越过边界 ——
+    //   上方留一大片空白，同时把另一半地图推出屏幕（实测 316px / 371px）。
+    this.offsetX = clampCameraOffset(cw / 2 - ((x0 + x1 + 1) / 2) * TILE * this.scale, cw, width * this.scale)
+    this.offsetY = clampCameraOffset(ch / 2 - ((y0 + y1 + 1) / 2) * TILE * this.scale, ch, height * this.scale)
     this.applyCamera()
     this.render()
   }

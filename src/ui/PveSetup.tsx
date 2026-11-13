@@ -301,7 +301,7 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
 
         <p className="muted small" data-testid="pve-difficulty-fairness">
           难度只改变 AI 的<b>决策水平</b>：AI 与你用<b>完全相同的规则</b>，
-          军费、据点收入、单位上限、行动点一项都不多给 —— 不会靠加资源来"变强"。
+          军费、据点收入、单位上限一项都不多给 —— 不会靠加资源来"变强"。
         </p>
       </section>
 

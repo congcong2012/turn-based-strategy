@@ -624,7 +624,9 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
                     <div key={p} className="score-row" data-testid={'score-' + p}>
                       <span style={{ color: playerColor(game, p) }}>
                         {nameOf(view, p)}
-                        {view.players.find((entry) => entry.playerId === p)?.isHost ? (
+                        {/* 单人练习没有"房主"这个概念（pveSession 里 seat 0 也标了 isHost），
+                            在 PVE 局里显示 👑 房主 纯属噪音，只给联机局显示 */}
+                        {mode === 'online' && view.players.find((entry) => entry.playerId === p)?.isHost ? (
                           <span className="tag" data-testid={'host-' + p} title="房主：负责校验指令并广播局面">
                             {' '}
                             👑 房主
@@ -804,7 +806,8 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
           ) : null}
           {mode === 'online' ? <DiagnosticsPanel view={view} /> : null}
           <p className="muted small">
-            地图：{map.name}（{map.width}×{map.height}） · 拖拽平移，滚轮缩放
+            {/* 触摸设备没有滚轮：写"滚轮缩放"会让人找滚轮（实测新手会去捏屏幕但以为"提示说的是滚轮"） */}
+            地图：{map.name}（{map.width}×{map.height}） · 拖拽平移，{touch ? '双指缩放' : '滚轮缩放'}
           </p>
         </aside>
       </div>
