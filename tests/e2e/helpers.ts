@@ -40,3 +40,19 @@ export async function joinRoom(page: Page, roomCode: string, nickname: string): 
 export async function waitForHost(page: Page, timeout = 20_000): Promise<void> {
   await expect(page.getByTestId('role-label')).toHaveText('你是房主', { timeout })
 }
+
+/**
+ * 打开开发者模式（写进设置那份 localStorage）。
+ *
+ * 用于**测技术项本身**的用例（诊断面板、信令策略）——这些 UI 在默认状态下是收起的，
+ * 属于刻意设计，不该为了测试把它们放出来给所有玩家看。
+ * ⚠️ 必须在 `page.goto` 之前调用（addInitScript 只对之后加载的文档生效）。
+ */
+export async function enableDevMode(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'ancient-tactics.settings',
+      JSON.stringify({ volume: 0.8, selfColor: null, devMode: true }),
+    )
+  })
+}

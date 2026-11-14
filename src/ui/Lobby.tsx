@@ -12,6 +12,7 @@ import { AppFooter } from './AppFooter'
 import { ConnectStatusBadge } from './ConnectStatusBadge'
 import { ConnectionHelp } from './ConnectionHelp'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
+import { useAppSettings } from '../app/settings'
 import { ManualSdpPanel } from './ManualSdpPanel'
 import { PlayerList } from './PlayerList'
 import { difficultyOptionLabel } from './difficultyCopy'
@@ -98,6 +99,7 @@ export function Lobby({
   const [copied, setCopied] = useState(false)
   const [mode, setMode] = useState<'p2p' | 'manual'>('p2p')
 
+  const { devMode } = useAppSettings()
   const inRoom = view.roomCode !== null && view.role !== 'idle' && (!view.manual || view.manual.phase === 'connected')
   /** 输入框里有没有内容（留空 = 想开新房，这是"创建房间"的唯一判据） */
   const codeFilled = code.trim().length > 0
@@ -164,28 +166,32 @@ export function Lobby({
       </header>
 
       <section className="panel">
-        {/* 走查 F7：未入房时别把「信令 MQTT / peer：0」糊在第一屏 ——
-            第一次来的人第一眼应该是"我要做什么"，而不是技术参数。
-            一旦开始连接（connecting / failed / 已入房）就必须显示，否则出错时无从判断。 */}
+        {/*
+          分三档：
+          1. 未入房 → 不显示任何状态（走查 F7：第一眼应该是"我要做什么"）；
+          2. 已入房 / 正在连接 → 常驻「身份 + 连接徽章」——"你是房主""掉线了"都是游玩信息；
+          3. 开发者模式额外加：信令类型、连接细节、peer 数量。
+        */}
         {inRoom || view.status !== 'idle' ? (
-          <>
-            <div className="status-line" data-testid="status-line">
-              <span>
-                信令：<b data-testid="strategy-label">{view.strategy === 'mqtt' ? 'MQTT' : 'Torrent'}</b>
-              </span>
-              <span>
-                连接：<b data-testid="connection-status">{STATUS_TEXT[view.status] ?? view.status}</b>
-              </span>
-              <span>
-                身份：<b data-testid="role-label">{ROLE_TEXT[view.role] ?? view.role}</b>
-              </span>
-              <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
-              <span>
-                在线 peer：<b data-testid="peer-count">{view.peerCount}</b>
-              </span>
-            </div>
-            {view.statusDetail ? <p className="muted small">详情：{view.statusDetail}</p> : null}
-          </>
+          <div className="status-line" data-testid="status-line">
+            <span>
+              身份：<b data-testid="role-label">{ROLE_TEXT[view.role] ?? view.role}</b>
+            </span>
+            <ConnectStatusBadge view={view} onRetry={() => actions.retryConnection()} />
+            {devMode ? (
+              <>
+                <span>
+                  信令：<b data-testid="strategy-label">{view.strategy === 'mqtt' ? 'MQTT' : 'Torrent'}</b>
+                </span>
+                <span>
+                  连接：<b data-testid="connection-status">{STATUS_TEXT[view.status] ?? view.status}</b>
+                </span>
+                <span>
+                  在线 peer：<b data-testid="peer-count">{view.peerCount}</b>
+                </span>
+              </>
+            ) : null}
+          </div>
         ) : (
           <p className="muted small" data-testid="lobby-idle-hint">
             还没加入房间：填一个 6 位房间码加入朋友的局，或直接点下面的「创建房间」开一局 —— 你会是房主。
@@ -426,17 +432,20 @@ export function Lobby({
               />
             </label>
 
-            <label className="field inline">
-              <span>信令策略</span>
-              <select
-                data-testid="strategy-select"
-                value={view.strategy}
-                onChange={(event) => actions.setStrategy(event.target.value as SignalStrategy)}
-              >
-                <option value="mqtt">MQTT（默认）</option>
-                <option value="torrent">Torrent（备用）</option>
-              </select>
-            </label>
+            {/* 信令策略是技术项：只在开发者模式下露出（出问题时另有「手动直连」兜底） */}
+            {devMode ? (
+              <label className="field inline">
+                <span>信令策略</span>
+                <select
+                  data-testid="strategy-select"
+                  value={view.strategy}
+                  onChange={(event) => actions.setStrategy(event.target.value as SignalStrategy)}
+                >
+                  <option value="mqtt">MQTT（默认）</option>
+                  <option value="torrent">Torrent（备用）</option>
+                </select>
+              </label>
+            ) : null}
 
             <Field editable={view.isHost}>
               <span>地图</span>
@@ -591,7 +600,7 @@ export function Lobby({
         </p>
       ) : null}
 
-      <DiagnosticsPanel view={view} />
+      {devMode ? <DiagnosticsPanel view={view} /> : null}
 
       <AppFooter onNavigate={onNavigate} />
     </div>

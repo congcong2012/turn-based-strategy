@@ -1,7 +1,7 @@
 import { versionLine } from '../version'
 import type { Page } from '../app/route'
 import { AppFooter } from './AppFooter'
-import { DevToolsDialog } from './DevToolsDialog'
+import { SettingsDialog } from './SettingsDialog'
 
 export interface HomePageProps {
   onNavigate: (page: Page) => void
@@ -47,6 +47,7 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
           <span className="entry-title">地图编辑器</span>
           <span className="entry-desc">画一张自己的地图，做好就能在单人练习里开一局</span>
         </button>
+        <SettingsDialog />
       </section>
 
       <section className="panel">
@@ -60,10 +61,6 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
       </section>
 
       <AppFooter onNavigate={onNavigate} />
-      {/* 开发者工具：一行小字，不打扰普通玩家；面板里也只影响单人练习 */}
-      <div className="home-devtools-row">
-        <DevToolsDialog />
-      </div>
       <p className="muted small" style={{ textAlign: 'center' }}>{versionLine()}</p>
     </div>
   )

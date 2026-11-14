@@ -2,11 +2,13 @@
  * M7 连接状态指示 E2E：等待对手 → 已连接 → 重连中，以及诊断面板内容。
  */
 import { expect, test } from '@playwright/test'
-import { ROOM, joinRoom, localUrl, waitForHost } from './helpers'
+import { ROOM, enableDevMode, joinRoom, localUrl, waitForHost } from './helpers'
 
 test.describe('连接状态指示（本地传输）', () => {
   test('状态徽章随连接情况变化，诊断面板可复制', async ({ context }) => {
     const alice = await context.newPage()
+    // 诊断面板 / 信令类型属于"开发者模式"内容，先打开再进房
+    await enableDevMode(alice)
     await alice.goto(localUrl('cs-a', '甲将军'))
     await joinRoom(alice, ROOM, '甲将军')
     await waitForHost(alice)
@@ -17,6 +19,7 @@ test.describe('连接状态指示（本地传输）', () => {
 
     // 对手进来 → 已连接
     const bob = await context.newPage()
+    await enableDevMode(bob)
     await bob.goto(localUrl('cs-b', '乙将军'))
     await joinRoom(bob, ROOM, '乙将军')
     await expect(alice.getByTestId('player-item')).toHaveCount(2)
@@ -38,6 +41,7 @@ test.describe('连接状态指示（本地传输）', () => {
 
   test('信令策略可一键切换（失败时的降级入口）', async ({ context }) => {
     const alice = await context.newPage()
+    await enableDevMode(alice)
     await alice.goto(localUrl('cs-c', '甲将军'))
     await joinRoom(alice, ROOM, '甲将军')
     await waitForHost(alice)

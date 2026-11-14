@@ -6,8 +6,9 @@
 
 import type { Application, Container } from 'pixi.js'
 import { DATA, getMap } from '../game/data'
+import { ownerColorNumber } from './playerColors'
 import type { GameData } from '../game/data'
-import type { GameState } from '../game/types'
+import type { GameState, PlayerId } from '../game/types'
 import { clampCameraOffset } from './camera'
 
 export const TILE = 48
@@ -22,6 +23,8 @@ export interface BoardView {
   selectedBuildingId: string | null
   /** 需要高亮部署区的玩家序号 */
   deployZoneIndex: number | null
+  /** 本机玩家：用于"我的颜色"偏好（见 render/playerColors） */
+  selfId?: PlayerId
   /** M5：单位 → 本次移动的逐格路径（含终点），用于播放移动动画 */
   movePaths?: Record<string, Array<{ x: number; y: number }>>
   /** M7：选中单位的攻击范围格（"x,y"），用红色边框标出 */
@@ -30,7 +33,7 @@ export interface BoardView {
   attackTooClose?: string[]
 }
 
-const OWNER_COLORS = [0xc65a44, 0x4aa89b, 0xd2a24b, 0x9078c8]
+/** 配色统一走 render/playerColors（要支持"我的颜色"设置） */
 const NEUTRAL = 0x6b6255
 // 小屏（手机 393px 宽）要能一次看全 24×24 棋盘：1152px 宽 → 需要 ~0.34 倍，因此下限放到 0.2
 const MIN_SCALE = 0.2
@@ -698,8 +701,7 @@ export class BoardApp {
         this.buildingViews.set(b.id, v)
       }
       const type = this.data.buildings[b.type]
-      const index = b.owner === null ? -1 : state.players.indexOf(b.owner)
-      const fill = index < 0 ? NEUTRAL : OWNER_COLORS[index % OWNER_COLORS.length]
+      const fill = b.owner === null ? NEUTRAL : ownerColorNumber(state, b.owner, this.view?.selfId)
       v.box.clear()
       v.box.roundRect(b.x * TILE + 6, b.y * TILE + 6, TILE - 12, TILE - 12, 6).fill(fill).stroke({ width: 2, color: 0x14110f })
       v.glyph.text = type.glyph
@@ -743,11 +745,11 @@ export class BoardApp {
     for (const b of state.buildings) {
       if (!b.capture) continue
       const ratio = Math.min(1, b.capture.points / this.data.capturePoints)
-      const ownerIndex = Math.max(0, state.players.indexOf(b.capture.playerId))
+      const captureColor = ownerColorNumber(state, b.capture.playerId, this.view?.selfId)
       overlay.rect(b.x * TILE + 4, b.y * TILE + TILE - 10, TILE - 8, 6).fill(0x14110f)
       overlay
         .rect(b.x * TILE + 4, b.y * TILE + TILE - 10, (TILE - 8) * ratio, 6)
-        .fill({ color: OWNER_COLORS[ownerIndex % OWNER_COLORS.length], alpha: 0.95 })
+        .fill({ color: captureColor, alpha: 0.95 })
     }
 
     // ---------- 部署区标签（常驻，按需显示）----------
@@ -763,10 +765,9 @@ export class BoardApp {
     let captureIndex = 0
     for (const b of state.buildings) {
       if (!b.capture) continue
-      const ownerIndex = Math.max(0, state.players.indexOf(b.capture.playerId))
       const label = this.textAt('capture', captureIndex, {
         fontSize: 11,
-        fill: OWNER_COLORS[ownerIndex % OWNER_COLORS.length],
+        fill: ownerColorNumber(state, b.capture.playerId, this.view?.selfId),
         fontWeight: '700',
         stroke: { color: 0x14110f, width: 3 },
       })
@@ -792,8 +793,7 @@ export class BoardApp {
         this.unitViews.set(unit.id, v)
       }
       const type = this.data.units[unit.type]
-      const index = Math.max(0, state.players.indexOf(unit.owner))
-      const color = OWNER_COLORS[index % OWNER_COLORS.length]
+      const color = ownerColorNumber(state, unit.owner, this.view?.selfId)
       const { x: cx, y: cy } = this.unitPixel(unit.id, unit.x, unit.y)
 
       v.halo.clear()

@@ -312,6 +312,8 @@ describe('pveSession · 存档', () => {
     expect(() => createPveSession({ schedule: syncSchedule })).toThrow(/必须提供/)
   })
 
+  // 超时给足：这条要**把两整局托管打完**再比对终局。AI 加上回防后对局变长了
+  // （同一份存档要跑两遍），原来 20s 的默认值已经不够 —— 它测的是确定性，不是速度。
   it('恢复后 AI 行为可复现：同一份存档恢复两次，走出的局面一致', () => {
     const { session, seen } = trackingSession(baseConfig())
     finishDeploy(session)
@@ -327,7 +329,7 @@ describe('pveSession · 存档', () => {
     const a = playToEndWith(restore())
     const b = playToEndWith(restore())
     expect(a).toEqual(b)
-  })
+  }, 90_000)
 })
 
 /** 把一局托管打完，返回终局的 winner（用于对比两次恢复的结果） */

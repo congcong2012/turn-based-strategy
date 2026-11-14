@@ -4,7 +4,7 @@
  */
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { ROOM, joinRoom, localHomeUrl, localUrl, waitForHost } from './helpers'
+import { ROOM, enableDevMode, joinRoom, localHomeUrl, localUrl, waitForHost } from './helpers'
 
 /** 页面上不该出现横向滚动条（手机上最容易出问题的地方） */
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {
@@ -88,6 +88,8 @@ test.describe('捐赠与版本号', () => {
   })
 
   test('诊断信息里带版本号与页面地址（发给房主就能定位版本）', async ({ page }) => {
+    // 诊断面板属于"开发者模式"内容
+    await enableDevMode(page)
     await page.goto(localUrl('r-d', '甲将军'))
     await page.getByTestId('diagnostics').click()
     await expect(page.getByTestId('diagnostics-body')).toContainText('版本: v')
@@ -229,43 +231,103 @@ test.describe('房间密码', () => {
   })
 })
 
-test.describe('开发者工具（手调 AI 参数）', () => {
-  test('★ 改一项 → 保存 → 刷新后还在 → 可恢复默认', async ({ page }) => {
+test.describe('设置 / 开发者模式', () => {
+  test('★ 设置：开发者模式开关控制 AI 参数显隐；改了会持久化', async ({ page }) => {
     await page.goto('/')
-    await page.getByTestId('devtools-open').click()
-    await expect(page.getByTestId('devtools-dialog')).toBeVisible()
+    await page.getByTestId('settings-open').click()
+    await expect(page.getByTestId('settings-dialog')).toBeVisible()
 
-    // 守土：默认 6，改成 0
+    // 默认关：AI 参数整块不出现
+    await expect(page.getByTestId('settings-ai-tuning')).toHaveCount(0)
+
+    // 打开开发者模式 → AI 参数出现
+    await page.getByTestId('settings-devmode').check()
+    await expect(page.getByTestId('settings-ai-tuning')).toBeVisible()
+
+    // 守土：默认 6 → 0，保存
     const defend = page.getByTestId('devtools-defend-number')
     await expect(defend).toHaveValue('6')
     await defend.fill('0')
     await expect(page.getByTestId('devtools-status')).toContainText('未保存')
-
     await page.getByTestId('devtools-save').click()
     await expect(page.getByTestId('devtools-status')).toContainText('已保存')
-    await page.getByTestId('devtools-close').click()
-    await expect(page.getByTestId('devtools-dialog')).toHaveCount(0)
 
-    // 刷新后仍是改过的值（存在 localStorage，不是只活在这一帧）
+    // 我的颜色 + 音量
+    await page.getByTestId('settings-color-青').click()
+    await expect(page.getByTestId('settings-color-青')).toHaveClass(/is-active/)
+    await page.getByTestId('settings-volume').fill('40')
+    await expect(page.getByTestId('settings-volume-value')).toHaveText('40%')
+
+    await page.getByTestId('settings-close').click()
+    await expect(page.getByTestId('settings-dialog')).toHaveCount(0)
+
+    // 刷新后全都还在
     await page.reload()
-    await page.getByTestId('devtools-open').click()
+    await page.getByTestId('settings-open').click()
+    await expect(page.getByTestId('settings-devmode')).toBeChecked()
     await expect(page.getByTestId('devtools-defend-number')).toHaveValue('0')
+    await expect(page.getByTestId('settings-color-青')).toHaveClass(/is-active/)
+    await expect(page.getByTestId('settings-volume-value')).toHaveText('40%')
 
     // 恢复默认
     await page.getByTestId('devtools-reset').click()
     await expect(page.getByTestId('devtools-defend-number')).toHaveValue('6')
   })
 
-  test('参数面板不影响单人练习开局（改完照样能进部署）', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('devtools-open').click()
-    await page.getByTestId('devtools-lookaheadK-number').fill('0')
-    await page.getByTestId('devtools-save').click()
-    await page.getByTestId('devtools-close').click()
+  test('★ 开发者模式关闭时，大厅不显示信令 / peer / 诊断信息', async ({ page }) => {
+    await page.goto(localUrl('gate-a', '甲将军'))
+    await expect(page.getByTestId('join-panel')).toBeVisible()
+    // 默认关：技术细节一律不出现
+    await expect(page.getByTestId('status-line')).toHaveCount(0)
+    await expect(page.getByTestId('strategy-select')).toHaveCount(0)
+    await expect(page.getByTestId('diagnostics')).toHaveCount(0)
 
+    // 打开开发者模式后它们才出现
+    await page.goto('/')
+    await page.getByTestId('settings-open').click()
+    await page.getByTestId('settings-devmode').check()
+    await page.getByTestId('settings-close').click()
+    await page.getByTestId('entry-online').click()
+    await expect(page.getByTestId('join-panel')).toBeVisible()
+    // 未入房时状态行/信令策略本来就不在（走查 F7 的设计）；dev 放出来的是「诊断信息」
+    await expect(page.getByTestId('diagnostics')).toBeVisible()
+
+    // 入房后技术项才齐：状态行 + 信令策略
+    await joinRoom(page, ROOM, '甲将军')
+    await expect(page.getByTestId('status-line')).toBeVisible()
+    await expect(page.getByTestId('strategy-select')).toBeVisible()
+  })
+
+  test('★ 单人局：开发者模式下局内可直接调 AI 参数', async ({ page }) => {
+    // 先关掉，验证默认没有入口
+    await page.goto('/')
     await page.getByTestId('entry-pve').click()
     await page.getByTestId('pve-opponents-1').click()
     await page.getByTestId('pve-start').click()
     await expect(page.getByTestId('phase-label')).toHaveText('部署')
+    await expect(page.getByTestId('ai-tuning-open')).toHaveCount(0)
+
+    // ⚠️ 单人局会自动恢复存档：必须先退出，否则再进来直接接着打、到不了设置页
+    await page.getByTestId('leave-button').click()
+    // 退出对局会清档并回到主页（不是停在设置页）
+    await expect(page.getByTestId('entry-pve')).toBeVisible()
+
+    // 打开开发者模式再来
+    await page.goto('/')
+    await page.getByTestId('settings-open').click()
+    await page.getByTestId('settings-devmode').check()
+    await page.getByTestId('settings-close').click()
+    await page.getByTestId('entry-pve').click()
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+
+    await page.getByTestId('ai-tuning-open').click()
+    await expect(page.getByTestId('ai-tuning-dialog')).toBeVisible()
+    await page.getByTestId('devtools-defend-number').fill('0')
+    await page.getByTestId('devtools-save').click()
+    await expect(page.getByTestId('devtools-status')).toContainText('已保存')
+    await page.getByTestId('ai-tuning-close').click()
+    await expect(page.getByTestId('ai-tuning-dialog')).toHaveCount(0)
   })
 })

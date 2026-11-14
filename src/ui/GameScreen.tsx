@@ -14,6 +14,8 @@ import { BattleLog } from './BattleLog'
 import { ConnectStatusBadge } from './ConnectStatusBadge'
 import { ConnectionHelp } from './ConnectionHelp'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
+import { AiTuningDialog } from './AiTuningDialog'
+import { useAppSettings } from '../app/settings'
 import { isSoundOn, playSound, setSoundOn, soundForEvent } from './sound'
 import { EMPTY_TAP_STATE, isTouchDevice, nextTapState } from './tapConfirm'
 import { MOVE_TYPE_LABEL, attackKindLabel, rangeLabel } from './unitText'
@@ -21,6 +23,7 @@ import { advisorHintOf } from './advisorText'
 import type { AdvisorStatus } from '../ai/advisor'
 import type { TapConfirmState } from './tapConfirm'
 import type { BoardView } from '../render/boardApp'
+import { ownerColor } from '../render/playerColors'
 
 export interface GameScreenProps {
   view: RoomView
@@ -41,17 +44,9 @@ export interface GameScreenProps {
   advisorStatus?: AdvisorStatus | null
 }
 
-const ROLE_COLORS = ['#c65a44', '#4aa89b', '#d2a24b', '#9078c8']
-/** 2v2 的队伍配色：同队同色，混战时仍按座位取 ROLE_COLORS */
-const TEAM_COLORS = ['#c65a44', '#4aa89b']
-
-function playerColor(state: GameState, playerId: PlayerId): string {
-  if (state.teams) {
-    const team = teamOf(state, playerId)
-    if (team !== null) return TEAM_COLORS[team % TEAM_COLORS.length]
-  }
-  const index = state.players.indexOf(playerId)
-  return ROLE_COLORS[(index < 0 ? 0 : index) % ROLE_COLORS.length]
+/** 配色统一走 render/playerColors（支持设置里的"我的颜色"） */
+function playerColor(state: GameState, playerId: PlayerId, selfId?: PlayerId | null): string {
+  return ownerColor(state, playerId, selfId)
 }
 
 function nameOf(view: RoomView, playerId: PlayerId): string {
@@ -60,6 +55,7 @@ function nameOf(view: RoomView, playerId: PlayerId): string {
 
 export function GameScreen({ view, actions, mode = 'online', onRestart, advisorStatus }: GameScreenProps) {
   const game = view.game as GameState
+  const { devMode } = useAppSettings()
   /** 军师提示（未开启参谋时为 null，整块不渲染） */
   const advisorHint = useMemo(() => advisorHintOf(advisorStatus ?? null), [advisorStatus])
   const [armedType, setArmedType] = useState<string | null>(null)
@@ -208,6 +204,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
     selectedUnitId,
     selectedBuildingId,
     deployZoneIndex: isDeploy && !myDeploy?.done ? myIndex : null,
+    selfId: view.selfId,
     movePaths,
     attackRange,
     attackTooClose,
@@ -385,7 +382,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
             阶段 <b data-testid="phase-label">{isDeploy ? '部署' : isOver ? '结束' : '行动'}</b>
           </span>
           <span className="hud-item">
-            当前 <b data-testid="current-player" style={{ color: playerColor(game, currentPlayer) }}>
+            当前 <b data-testid="current-player" style={{ color: playerColor(game, currentPlayer, view.selfId) }}>
               {nameOf(view, currentPlayer)}
               {currentPlayer === view.selfId ? '（你）' : ''}
             </b>
@@ -412,6 +409,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
           ) : null}
         </span>
         <span className="hud-group hud-actions">
+          {mode === 'pve' && devMode ? <AiTuningDialog /> : null}
           <button type="button" data-testid="locate-button" onClick={locate} title="把镜头对准我的部署区 / 部队">
             🎯 定位
           </button>
@@ -644,7 +642,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
                 <div className="score-rows">
                   {game.players.map((p) => (
                     <div key={p} className="score-row" data-testid={'score-' + p}>
-                      <span style={{ color: playerColor(game, p) }}>
+                      <span style={{ color: playerColor(game, p, view.selfId) }}>
                         {nameOf(view, p)}
                         {game.teams ? (
                           <span className="tag tag-team" data-testid={'teamtag-' + p}>
@@ -832,7 +830,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
               {view.error}
             </p>
           ) : null}
-          {mode === 'online' ? <DiagnosticsPanel view={view} /> : null}
+          {mode === 'online' && devMode ? <DiagnosticsPanel view={view} /> : null}
           <p className="muted small">
             {/* 触摸设备没有滚轮：写"滚轮缩放"会让人找滚轮（实测新手会去捏屏幕但以为"提示说的是滚轮"） */}
             地图：{map.name}（{map.width}×{map.height}） · 拖拽平移，{touch ? '双指缩放' : '滚轮缩放'}
