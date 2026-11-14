@@ -228,3 +228,44 @@ test.describe('房间密码', () => {
     expect(link).not.toContain('key=')
   })
 })
+
+test.describe('开发者工具（手调 AI 参数）', () => {
+  test('★ 改一项 → 保存 → 刷新后还在 → 可恢复默认', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('devtools-open').click()
+    await expect(page.getByTestId('devtools-dialog')).toBeVisible()
+
+    // 守土：默认 6，改成 0
+    const defend = page.getByTestId('devtools-defend-number')
+    await expect(defend).toHaveValue('6')
+    await defend.fill('0')
+    await expect(page.getByTestId('devtools-status')).toContainText('未保存')
+
+    await page.getByTestId('devtools-save').click()
+    await expect(page.getByTestId('devtools-status')).toContainText('已保存')
+    await page.getByTestId('devtools-close').click()
+    await expect(page.getByTestId('devtools-dialog')).toHaveCount(0)
+
+    // 刷新后仍是改过的值（存在 localStorage，不是只活在这一帧）
+    await page.reload()
+    await page.getByTestId('devtools-open').click()
+    await expect(page.getByTestId('devtools-defend-number')).toHaveValue('0')
+
+    // 恢复默认
+    await page.getByTestId('devtools-reset').click()
+    await expect(page.getByTestId('devtools-defend-number')).toHaveValue('6')
+  })
+
+  test('参数面板不影响单人练习开局（改完照样能进部署）', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('devtools-open').click()
+    await page.getByTestId('devtools-lookaheadK-number').fill('0')
+    await page.getByTestId('devtools-save').click()
+    await page.getByTestId('devtools-close').click()
+
+    await page.getByTestId('entry-pve').click()
+    await page.getByTestId('pve-opponents-1').click()
+    await page.getByTestId('pve-start').click()
+    await expect(page.getByTestId('phase-label')).toHaveText('部署')
+  })
+})

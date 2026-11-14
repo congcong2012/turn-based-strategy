@@ -78,6 +78,15 @@ describe('aiWorker · 协议等价性', () => {
   })
 })
 
+  it('★ 手调覆盖：空对象与"不带 tuning"逐字等价（没调过就零变化）', () => {
+    const state = createGame('ancient_01', ['you', 'ai-1'], DATA)
+    const task = taskFor(state, 'hard')
+    const data = createWorkerData()
+    const plain = handleAiRequest({ ...task, id: 1 }, data)
+    const emptyTuning = handleAiRequest({ ...task, id: 2, tuning: {} }, data)
+    expect(emptyTuning).toEqual(plain)
+  })
+
 describe('aiWorker · 客户端的一定可用性', () => {
   it('环境里没有 Worker（如 node/单测）时，同步返回结果并标记未使用 Worker', () => {
     const client = createAiWorkerClient()

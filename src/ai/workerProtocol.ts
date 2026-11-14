@@ -14,7 +14,10 @@
 import { DATA } from '../game/data'
 import type { GameData, MapDef } from '../game/data'
 import { nextCommand, nextCommandWith } from './index'
+import { profileFor } from './profile'
 import type { AiProfile, Difficulty } from './profile'
+import { mergeTuning } from '../app/aiTuning'
+import type { AiTuning } from '../app/aiTuning'
 import { mulberry32 } from './rng'
 import type { Command, GameState, PlayerId } from '../game/types'
 
@@ -44,6 +47,14 @@ export interface AiTask {
    * 这也是它作为跨线程载荷的前提。
    */
   profile?: AiProfile
+  /**
+   * 可选的**手调覆盖**（首页「开发者工具」用，仅单人对局会带）。
+   *
+   * 与 `profile` 的关系：`profile` 是"参谋给的整份档案"，
+   * `tuning` 是"人在面板上拧的几个旋钮"，**优先级在最后**（显式手调压过参谋建议）。
+   * 不传 = 零变化。
+   */
+  tuning?: AiTuning
 }
 
 export interface AiRequest extends AiTask {
@@ -78,6 +89,13 @@ export function createWorkerData(): GameData {
  */
 export function handleAiRequest(task: AiRequest, data: GameData): Command {
   data.maps[task.map.id] = task.map
+
+  // 手调覆盖：叠加在"难度档 / 参谋档"之上（空对象等价于没调过）
+  if (task.tuning && Object.keys(task.tuning).length > 0) {
+    const base = task.profile ?? profileFor(task.difficulty)
+    return nextCommandWith(task.state, task.playerId, mergeTuning(base, task.tuning), data, mulberry32(task.seed))
+  }
+
   if (task.profile) {
     return nextCommandWith(task.state, task.playerId, task.profile, data, mulberry32(task.seed))
   }

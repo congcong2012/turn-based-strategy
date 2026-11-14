@@ -671,3 +671,37 @@ button.block { width: 100%; margin-bottom: 8px; }
     animation-iteration-count: 1 !important;
   }
 }
+
+/* ===== 开发者工具（首页底部的小入口 + 参数面板） ===== */
+.home-devtools-row { display: flex; justify-content: center; margin-top: 10px; }
+.devtools-link {
+  background: none; border: none; padding: 2px 6px;
+  font-size: 12px; color: var(--muted); cursor: pointer;
+  border-bottom: 1px dashed var(--line); white-space: nowrap;
+}
+.devtools-link:hover { color: var(--text); border-bottom-color: var(--gold); }
+
+.devtools-card { max-width: 640px; width: calc(100% - 32px); max-height: 88vh; overflow-y: auto; }
+.devtools-grid { display: flex; flex-direction: column; gap: 7px; margin: 10px 0; }
+/* 宽屏两列：8 个滑杆排成 4 行，配合吸底操作区就能一屏放下（否则最后一个开关会被挡住） */
+@media (min-width: 560px) {
+  .devtools-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
+}
+.devtools-row { display: flex; flex-direction: column; gap: 4px; }
+.devtools-label { font-size: 13px; color: var(--text); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.devtools-label em { font-style: normal; }
+.devtools-control { display: flex; align-items: center; gap: 8px; }
+.devtools-control input[type='range'] { flex: 1 1 auto; min-width: 0; accent-color: var(--gold); }
+.devtools-number { width: 76px; flex: 0 0 auto; }
+.devtools-default { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.devtools-default.is-default { opacity: 0.6; }
+.devtools-toggles { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.devtools-toggle { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.devtools-toggle input[type='checkbox'] { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 2px; }
+.devtools-toggle em { font-style: normal; }
+/* 操作区钉在卡片底部：内容再长也不会把"保存"挤到看不见的地方 */
+.devtools-actions {
+  flex-wrap: wrap; align-items: center; gap: 8px;
+  position: sticky; bottom: 0; margin-top: 8px; padding: 10px 0 4px;
+  background: linear-gradient(to bottom, rgba(31, 26, 20, 0.6), var(--panel) 35%);
+}

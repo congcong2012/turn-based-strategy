@@ -23,6 +23,7 @@ import type { AiWorkerClient } from '../ai/workerClient'
 import { withAdvisor } from '../ai/advisor'
 import type { AdvisorStatus } from '../ai/advisor'
 import { isAdvisorUsable, loadAdvisorSettings } from '../ai/advisor/settings'
+import { loadAiTuning } from '../app/aiTuning'
 import { PVE_SAVE_VERSION, clearPve, loadPve, savePve } from '../app/pveStore'
 import { defaultStorage } from '../net/gameStore'
 import type { RoomActions } from './useRoom'
@@ -153,7 +154,11 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
         },
       })
     }
-    return advisorWrappedRef.current(task)
+    // 手调参数（首页「开发者工具」）：每个决策现读一次，
+    // 这样在面板上调完不用重开对局就能看到效果。没调过 ⇒ 空对象 ⇒ 不改变任何行为。
+    const tuning = loadAiTuning()
+    const withTuning = Object.keys(tuning).length > 0 ? { ...task, tuning } : task
+    return advisorWrappedRef.current(withTuning)
   }, [])
 
   /**
