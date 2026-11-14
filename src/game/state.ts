@@ -3,6 +3,7 @@
 import { DATA, buildingType, getMap, initialBuildings, moveCost, unitType } from './data'
 import type { GameData } from './data'
 import { buildingById, clone, mapOf } from './board'
+import { aliveTeams, teamOf } from './teams'
 import type { GameEvent, GameState, PlayerId, Unit } from './types'
 
 function nextUnitId(state: GameState): string {
@@ -40,9 +41,20 @@ export function createGame(mapId: string, players: PlayerId[], data: GameData = 
   }
 }
 
-export function currentPlayer(state: GameState): PlayerId {
-  return state.players[state.turnIndex]
+/**
+ * 给新开的对局套上队伍（2v2）。
+ *
+ * 为什么不在 `createGame` 里加参数：它会污染 PVE 与所有既有调用点。
+ * 大厅只在 2v2 时调用一次，长度不符或未传就原样返回（当混战处理），
+ * 于是"混战/单人"这条路一个字节都没变。
+ */
+export function withTeams(state: GameState, teams?: number[]): GameState {
+  if (!teams || teams.length !== state.players.length) return state
+  return { ...state, teams: [...teams] }
 }
+
+export function currentPlayer(state: GameState): PlayerId {
+  return state.players[state.turnIndex]}
 
 export function incomeOf(state: GameState, playerId: PlayerId, data: GameData = DATA): number {
   let total = 0
@@ -195,6 +207,24 @@ function finishGame(s: GameState, events: GameEvent[]): void {
   const alive = survivors(s)
   const reason = (s.lastElimination ?? 'annihilation') as 'hq_captured' | 'annihilation' | 'resign'
   s.phase = 'GAME_OVER'
+
+  // 2v2：分出胜负的判据是"只剩一支队伍"，而不是"只剩一个人" ——
+  // 队友双双存活也算赢；`winner` 仍填该队的存活代表，保证既有 UI/AI 不用改。
+  if (s.teams) {
+    const teams = aliveTeams(s)
+    if (teams.length === 1) {
+      s.winnerTeam = teams[0]
+      s.winner = alive.find((p) => teamOf(s, p) === teams[0]) ?? null
+      s.winReason = reason
+    } else {
+      s.winnerTeam = null
+      s.winner = null
+      s.winReason = 'score'
+    }
+    events.push({ type: 'gameOver', winner: s.winner, reason: s.winReason, team: s.winnerTeam })
+    return
+  }
+
   s.winner = alive.length === 1 ? alive[0] : null
   s.winReason = alive.length === 1 ? reason : 'score'
   events.push({ type: 'gameOver', winner: s.winner, reason: s.winReason })
@@ -220,6 +250,12 @@ function applyWinCheck(s: GameState, events: GameEvent[], data: GameData = DATA)
   for (const p of s.players) {
     if (s.eliminated.includes(p)) continue
     if (s.units.every((u) => u.owner !== p)) eliminate(s, p, 'annihilation', events)
+  }
+
+  if (s.teams) {
+    // 队伍模式下"还有人活着"不等于"还没输" —— 只剩一支队伍就结束
+    if (aliveTeams(s).length <= 1) finishGame(s, events)
+    return
   }
 
   if (survivors(s).length <= 1) finishGame(s, events)
@@ -279,9 +315,31 @@ export function endTurn(state: GameState, data: GameData = DATA): { state: GameS
     if (s.round > data.rules.roundLimit) {
       const scored = survivors(s).map((p) => ({ p, score: scoreOf(s, p, data) }))
       scored.sort((a, b) => b.score - a.score)
+      s.phase = 'GAME_OVER'
+
+      // 2v2：按**队伍总分**比，而不是按个人分 —— 否则会出现"输的队伍里分最高的人获胜"
+      if (s.teams) {
+        const totals = new Map<number, number>()
+        for (const { p, score } of scored) {
+          const team = teamOf(s, p)
+          if (team === null) continue
+          totals.set(team, (totals.get(team) ?? 0) + score)
+        }
+        const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1])
+        const top = ranked[0]
+        const tied = ranked.length > 1 && ranked.filter(([, v]) => v === top[1]).length > 1
+        s.winnerTeam = tied || !top ? null : top[0]
+        s.winner =
+          s.winnerTeam === null
+            ? null
+            : (scored.find((x) => teamOf(s, x.p) === s.winnerTeam)?.p ?? null)
+        s.winReason = 'score'
+        events.push({ type: 'gameOver', winner: s.winner, reason: 'score', team: s.winnerTeam })
+        return { state: s, events }
+      }
+
       const top = scored[0]
       const tied = scored.filter((x) => x.score === top.score).length > 1
-      s.phase = 'GAME_OVER'
       s.winner = tied || !top ? null : top.p
       s.winReason = 'score'
       events.push({ type: 'gameOver', winner: s.winner, reason: 'score' })

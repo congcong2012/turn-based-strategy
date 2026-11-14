@@ -141,6 +141,8 @@ test.describe('大厅（本地传输）', () => {
 
     await input.fill('ab23cd')
     await expect(input).toHaveValue('AB23CD')
+    // 填了码后仍然是"加入或创建"：房里有人是加入，没人你就是房主
+    await expect(page.getByTestId('join-button')).toHaveText('加入 / 创建房间')
     await expect(page.getByTestId('join-button')).toBeEnabled()
 
     await input.fill('ab1')
@@ -170,4 +172,38 @@ test.describe('大厅（本地传输）', () => {
     // 进房后技术参数才出现（出问题时要靠它判断）
     await expect(page.getByTestId('status-line')).toBeVisible()
   })
+  test('★ 2v2：四个席位才能开局；开局后两队各两人、同队同标', async ({ context }) => {
+    const alice = await context.newPage()
+    const bob = await context.newPage()
+
+    await alice.goto(localUrl('t2-a', '甲将军'))
+    await joinRoom(alice, ROOM, '甲将军')
+    await waitForHost(alice)
+    await bob.goto(localUrl('t2-b', '乙将军'))
+    await joinRoom(bob, ROOM, '乙将军')
+    await expect(alice.getByTestId('player-item')).toHaveCount(2)
+
+    // 切 2v2：只有 2 个席位 → 说明出现，开始按钮保持禁用
+    await alice.getByTestId('team-mode-select').selectOption('2v2')
+    await expect(alice.getByTestId('team-mode-hint')).toBeVisible()
+    await alice.getByTestId('ready-button').click()
+    await bob.getByTestId('ready-button').click()
+    await expect(alice.getByTestId('start-button')).toBeDisabled()
+
+    // AI 补到 4 席 → 可开局（2 真人 + 2 AI）
+    await alice.getByTestId('ai-slots-select').selectOption('4')
+    await expect(alice.getByTestId('start-button')).toBeEnabled()
+    await alice.getByTestId('start-button').click()
+    await expect(alice.getByTestId('phase-label')).toHaveText('部署')
+
+    // 四个队伍标签，两名真人分属不同队（对角同队：0&3 vs 1&2）
+    await expect(alice.locator('[data-testid^="teamtag-"]')).toHaveCount(4)
+    await expect(alice.getByTestId('teamtag-t2-a')).toHaveText(/甲队/)
+    await expect(alice.getByTestId('teamtag-t2-b')).toHaveText(/乙队/)
+
+    // 客机看到的是同一份分组
+    await expect(bob.getByTestId('teamtag-t2-a')).toHaveText(/甲队/)
+    await expect(bob.getByTestId('teamtag-t2-b')).toHaveText(/乙队/)
+  })
+
 })

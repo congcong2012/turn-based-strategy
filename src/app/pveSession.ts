@@ -46,7 +46,7 @@ export interface PveConfig {
 /** 人类与 AI 的默认身份 */
 export const PVE_HUMAN_ID = 'you'
 const AI_PREFIX = 'ai-'
-const AI_NAMES = ['电脑甲', '电脑乙', '电脑丙']
+const AI_NAMES = ['电脑甲', '电脑乙', '电脑丙', '电脑丁']
 
 /** AI 每步之间的间隔（毫秒）：让棋盘上的动作看得出来 */
 export const DEFAULT_ACTION_DELAY_MS = 450
@@ -256,6 +256,7 @@ export function createPveSession(options: PveSessionOptions): PveSession {
       status,
       statusDetail: null,
       kind,
+      teamMode: 'ffa',
       strategy,
       role,
       roomCode: null,

@@ -3,6 +3,7 @@
 import { DATA, moveCost } from './data'
 import type { GameData, MapDef } from './data'
 import { mapOf, tileKey } from './board'
+import { areAllies } from './teams'
 import type { GameState, Unit } from './types'
 
 export type ReachMap = Map<string, { cost: number; from: string | null }>
@@ -90,7 +91,8 @@ export function attackableTargets(state: GameState, unit: Unit, data: GameData =
   const type = data.units[unit.type]
   if (type.attack === 'indirect' && unit.moved) return []
   return state.units.filter((u) => {
-    if (u.owner === unit.owner) return false
+    // 2v2：队友不是目标（混战时 areAllies 退化成"只有自己"，与旧逻辑等价）
+    if (areAllies(state, unit.owner, u.owner)) return false
     const d = chebyshevDistance(unit, u)
     return d >= type.rangeMin && d <= type.rangeMax
   })

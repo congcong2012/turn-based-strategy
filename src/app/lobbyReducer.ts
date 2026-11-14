@@ -27,6 +27,7 @@ export function createLobby(roomCode: string, hostId: string, phase: Phase = 'LO
      */
     aiSlotCount: 0,
     aiDifficulty: DEFAULT_AI_DIFFICULTY,
+    teamMode: 'ffa',
     rev: 0,
   })
 }
@@ -44,7 +45,18 @@ export function setMapId(lobby: LobbySnapshot, mapId: string | null): LobbySnaps
  */
 export function setAiSlotCount(lobby: LobbySnapshot, count: number): LobbySnapshot {
   const next = count <= 0 ? 0 : Math.min(MAX_PLAYERS, Math.max(2, Math.floor(count)))
-  return resolveLobbyAiDifficulty({ ...lobby, aiSlotCount: next })
+  // ⚠️ 必须 recompute：2v2 的 canStart 取决于"席位是否凑满 4"，改补位会改变它
+  return recompute(resolveLobbyAiDifficulty({ ...lobby, aiSlotCount: next }))
+}
+
+/**
+ * 对局模式：混战 / 2v2。
+ *
+ * 2v2 需要**四个席位**（真人在座 + AI 补位凑满），所以切换后要重算 canStart ——
+ * 房主可以先开 2v2 再拉人，人数不够时"开始"按钮应当是灰的，而不是开局后少一队。
+ */
+export function setTeamMode(lobby: LobbySnapshot, mode: 'ffa' | '2v2'): LobbySnapshot {
+  return recompute({ ...lobby, teamMode: mode })
 }
 
 /** 房主选"替真人行动的 AI 用哪一档"（AI 补位 + 掉线托管共用） */
@@ -167,6 +179,10 @@ export function recompute(lobby: LobbySnapshot): LobbySnapshot {
   const online = players.filter((p) => p.connected)
   // 观战者不算"在线玩家里的人"：既不计入人数，也不阻塞开局
   const seated = online.filter((p) => !p.spectator)
-  const canStart = seated.length >= 2 && seated.every((p) => p.ready) && seated.length <= MAX_PLAYERS
+  // 本局席位 = max(真人在座, AI 补位目标)；2v2 必须是 4 席（两队各两人，缺一不可）
+  const seats = Math.max(seated.length, lobby.aiSlotCount)
+  const teamOk = lobby.teamMode !== '2v2' || seats === MAX_PLAYERS
+  const canStart =
+    seated.length >= 2 && seated.every((p) => p.ready) && seated.length <= MAX_PLAYERS && teamOk
   return { ...lobby, players, canStart }
 }

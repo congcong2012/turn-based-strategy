@@ -294,7 +294,11 @@ export function Lobby({
                       : createRoom()
                   }
                 >
-                  {codeFilled ? '加入房间' : '创建房间'}
+                  {/*
+                    填了码也是「加入 / 创建」二义：房里已经有人就是加入，没人你进去就是房主（创建）。
+                    只写「加入房间」会让"自己起个码建房"的人以为走错了路。
+                  */}
+                  {codeFilled ? '加入 / 创建房间' : '创建房间'}
                 </button>
                 <button
                   type="button"
@@ -484,6 +488,32 @@ export function Lobby({
               ) : (
                 <span className="muted small" data-testid="ai-slots-label">
                   {view.aiSlotCount > 0 ? `共 ${view.aiSlotCount} 方（不足的用 AI 补）` : '不补位'}
+                </span>
+              )}
+            </Field>
+
+            <Field editable={view.isHost}>
+              <span>模式</span>
+              {view.isHost ? (
+                <>
+                  <select
+                    data-testid="team-mode-select"
+                    value={view.teamMode}
+                    onChange={(event) => actions.setTeamMode(event.target.value as 'ffa' | '2v2')}
+                  >
+                    <option value="ffa">混战（各自为战）</option>
+                    <option value="2v2">2v2（两队对战）</option>
+                  </select>
+                  {view.teamMode === '2v2' ? (
+                    <span className="muted small" data-testid="team-mode-hint">
+                      需要 <b>4 个席位</b>（真人在座 + AI 补位凑满）。<b>对角同队</b>：
+                      第 1&amp;4 位一队、第 2&amp;3 位一队；队友之间不能攻击，也不能抢对方据点。
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                <span className="muted small" data-testid="team-mode-label">
+                  {view.teamMode === '2v2' ? '2v2（两队对战）' : '混战（各自为战）'}
                 </span>
               )}
             </Field>

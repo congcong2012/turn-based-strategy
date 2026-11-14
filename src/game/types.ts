@@ -96,6 +96,15 @@ export type GameState = {
   lastElimination?: 'hq_captured' | 'annihilation' | 'resign'
   winner: PlayerId | null
   winReason: 'hq_captured' | 'annihilation' | 'score' | 'resign' | null
+  /**
+   * 队伍编号（与 `players` 下标对齐，例如 2v2 的 `[0,1,1,0]`）。
+   *
+   * **缺省 = 混战**（每名玩家各自为战），单人练习与旧存档都走这条路。
+   * 判敌我用 `src/game/teams.ts` 的 `areAllies()`，别在别处直接比 owner。
+   */
+  teams?: number[]
+  /** 获胜队伍（仅 2v2 有意义；`winner` 仍是该队的存活代表玩家） */
+  winnerTeam?: number | null
   nextSeq: number
 }
 
@@ -120,7 +129,13 @@ export type GameEvent =
   | { type: 'turnStart'; playerId: PlayerId; round: number }
   | { type: 'turnEnd'; playerId: PlayerId }
   | { type: 'eliminated'; playerId: PlayerId; reason: 'hq_captured' | 'annihilation' | 'resign' }
-  | { type: 'gameOver'; winner: PlayerId | null; reason: 'hq_captured' | 'annihilation' | 'score' | 'resign' }
+  | {
+      type: 'gameOver'
+      winner: PlayerId | null
+      reason: 'hq_captured' | 'annihilation' | 'score' | 'resign'
+      /** 2v2 时带上获胜队伍编号，供日志与结算显示"队伍 X 获胜" */
+      team?: number | null
+    }
 
 export type Command =
   | { type: 'deploy'; unitType: string; x: number; y: number }

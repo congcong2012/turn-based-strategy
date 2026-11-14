@@ -199,6 +199,8 @@ button.danger:hover:not(:disabled) { border-color: var(--red); }
 .tag-host { border-color: var(--gold); color: var(--gold); }
 .tag-ready { border-color: var(--cyan); color: var(--cyan); }
 .tag-waiting { color: var(--muted); }
+/* 2v2 的队伍标签：与玩家名的队伍色配套，克制一点，别抢读秒 */
+.tag-team { border-color: #4a3d26; color: #cbb98f; background: rgba(210, 162, 75, 0.08); }
 
 .room-controls { margin-top: 14px; }
 .room-extra { margin-top: 16px; gap: 16px; align-items: flex-end; }

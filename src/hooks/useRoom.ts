@@ -45,6 +45,8 @@ export interface RoomActions {
    * 传内部难度 id（`hard` = 困难·快棋、`oracle` = 困难·深推演）；后者只在两人局成立。
    */
   setAiDifficulty: (difficulty: Difficulty) => void
+  /** 房主：切换对局模式（混战 / 2v2） */
+  setTeamMode: (mode: 'ffa' | '2v2') => void
   /** 手动直连：开始配对（host = 生成邀请码，guest = 等待粘贴邀请码） */
   startManualPairing: (roomCode: string, role: 'host' | 'guest', nickname: string) => void
   /** 手动直连：提交对方的连接码 */
@@ -68,6 +70,7 @@ function idleView(identity: Identity, kind: TransportKind, strategy: SignalStrat
     status: 'idle',
     statusDetail: null,
     kind,
+    teamMode: 'ffa',
     strategy,
     role: 'idle',
     roomCode: null,
@@ -251,6 +254,7 @@ export function useRoom(): UseRoomResult {
   const takeOverDisconnectedTurn = useCallback(() => sessionRef.current?.takeOverDisconnectedTurn(), [])
   const setMap = useCallback((mapId: string | null) => sessionRef.current?.setMap(mapId), [])
   const setAiSlots = useCallback((count: number) => sessionRef.current?.setAiSlots(count), [])
+  const setTeamMode = useCallback((mode: 'ffa' | '2v2') => sessionRef.current?.setTeamMode(mode), [])
   const setAiDifficulty = useCallback(
     (difficulty: Difficulty) => sessionRef.current?.setAiDifficulty(difficulty),
     [],
@@ -308,6 +312,7 @@ export function useRoom(): UseRoomResult {
       takeOverDisconnectedTurn,
       setMap,
       setAiSlots,
+      setTeamMode,
       setAiDifficulty,
       startManualPairing,
       submitManualCode,
@@ -326,6 +331,7 @@ export function useRoom(): UseRoomResult {
       setMap,
       setAiSlots,
       setAiDifficulty,
+      setTeamMode,
       startManualPairing,
       submitManualCode,
       retryConnection,

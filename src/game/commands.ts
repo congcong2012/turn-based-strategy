@@ -6,6 +6,7 @@ import { buildingAt, buildingById, clone, inDeployZone, unitById, unitsOf } from
 import { canCounter, computeDamage } from './combat'
 import { chebyshevDistance, pathTo } from './movement'
 import { currentPlayer, endTurn, makeUnit, resign, startTurn } from './state'
+import { areAllies } from './teams'
 import type { Command, CommandResult, ErrorCode, GameEvent, GameState, PlayerId } from './types'
 
 function ok(state: GameState, events: GameEvent[] = []): CommandResult {
@@ -138,7 +139,8 @@ function attackUnit(state: GameState, playerId: PlayerId, unitId: string, target
   const defender = unitById(state, targetId)
   if (!attacker || !defender) return fail('UNKNOWN_UNIT')
   if (attacker.owner !== playerId) return fail('UNIT_NOT_YOURS')
-  if (defender.owner === playerId) return fail('TARGET_INVALID')
+  // 2v2：队友不能打（混战时 areAllies 只在 a===b 时为真，与旧的 owner 相等判断一致）
+  if (areAllies(state, playerId, defender.owner)) return fail('TARGET_INVALID')
   if (attacker.acted) return fail('UNIT_ALREADY_ACTED')
 
   const type = unitType(attacker.type, data)
@@ -184,7 +186,8 @@ function captureBuilding(state: GameState, playerId: PlayerId, unitId: string, d
   if (!unitType(unit.type, data).capture) return fail('CANNOT_CAPTURE')
   const building = buildingAt(state, unit.x, unit.y)
   if (!building) return fail('NOT_A_BUILDING')
-  if (building.owner === playerId) return fail('NOTHING_TO_DO')
+  // 2v2：不能抢队友的据点（否则"偷家"会变成队友互坑）
+  if (building.owner !== null && areAllies(state, playerId, building.owner)) return fail('NOTHING_TO_DO')
 
   const s = clone(state)
   const target = buildingById(s, building.id) as NonNullable<ReturnType<typeof buildingById>>

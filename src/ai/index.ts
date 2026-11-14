@@ -28,6 +28,7 @@ import { DATA } from '../game/data'
 import type { GameData } from '../game/data'
 import { chebyshevDistance } from '../game/movement'
 import { currentPlayer } from '../game/state'
+import { isAllyOwner, isNonAllyOwner } from '../game/teams'
 import { deployCommandsFor, playCommandsFor } from '../game/legalCommands'
 import { applyCommand } from '../game/commands'
 import { evaluate } from './evaluate'
@@ -119,8 +120,8 @@ function pickDeploy(
 
   // 普通 / 困难 / 专家：优先按计划兵种，落点选"最靠前"（离敌方王城最近）
   const wanted = profile.deployPlan[entry.placed] ?? 'sword'
-  const enemyHqs = state.buildings.filter((b) => b.type === 'hq' && b.owner !== playerId)
-  const mine = profile.cohesion > 0 ? state.units.filter((u) => u.owner === playerId) : []
+  const enemyHqs = state.buildings.filter((b) => b.type === 'hq' && isNonAllyOwner(state, playerId, b.owner))
+  const mine = profile.cohesion > 0 ? state.units.filter((u) => isAllyOwner(state, playerId, u.owner)) : []
 
   let bestScore = -Infinity
   const scoredDeploys: Array<{ cmd: (typeof deploys)[number]; value: number }> = []

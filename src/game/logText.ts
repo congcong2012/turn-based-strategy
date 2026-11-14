@@ -1,6 +1,7 @@
 /** 把内核的 GameEvent 翻译成中文战报（纯函数，便于单测） */
 
 import { DATA } from './data'
+import { teamLabel } from './teams'
 import type { GameEvent } from './types'
 
 export interface LogContext {
@@ -56,8 +57,15 @@ export function describeEvent(event: GameEvent, ctx: LogContext): string {
         (event.reason === 'hq_captured' ? '王城失守' : event.reason === 'annihilation' ? '全军覆没' : '投降') +
         '）'
       )
-    case 'gameOver':
-      return '对局结束：' + (event.winner ? ctx.playerName(event.winner) + ' 获胜' : '和局') + '（' + (WIN_REASON[event.reason] ?? event.reason) + '）'
+    case 'gameOver': {
+      const who =
+        event.team !== null && event.team !== undefined
+          ? teamLabel(event.team)
+          : event.winner
+            ? ctx.playerName(event.winner)
+            : null
+      return '对局结束：' + (who ? who + ' 获胜' : '和局') + '（' + (WIN_REASON[event.reason] ?? event.reason) + '）'
+    }
     default:
       return ''
   }

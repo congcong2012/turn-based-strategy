@@ -23,6 +23,7 @@ import { buildingAt, defenseOf } from '../game/board'
 import { baseDamage, computeDamage } from '../game/combat'
 import { chebyshevDistance } from '../game/movement'
 import { scoreOf } from '../game/state'
+import { areAllies, isAllyOwner, isNonAllyOwner } from '../game/teams'
 import type { GameState, PlayerId } from '../game/types'
 
 /** 据点权重：王城 ≫ 兵营 > 村落 */
@@ -103,7 +104,7 @@ export function evaluate(
   for (const unit of state.units) {
     const type = unitType(unit.type, data)
     const worth = type.cost * (unit.hp / type.hp)
-    score += unit.owner === playerId ? worth : -worth
+    score += isAllyOwner(state, playerId, unit.owner) ? worth : -worth
   }
 
   // 1b) E1（切片 3）：`pending`（已付费、未出场）计入材料分。
@@ -112,7 +113,7 @@ export function evaluate(
   if (pendingMaterial > 0) {
     for (const order of state.pending) {
       const type = unitType(order.type, data)
-      score += (order.owner === playerId ? 1 : -1) * type.cost * pendingMaterial
+      score += (isAllyOwner(state, playerId, order.owner) ? 1 : -1) * type.cost * pendingMaterial
     }
   }
 
@@ -120,7 +121,7 @@ export function evaluate(
   for (const building of state.buildings) {
     const type = buildingType(building.type, data)
     const value = (BUILDING_WEIGHT[building.type] ?? 1) * 100 + type.income * 0.5
-    const mine = building.owner === playerId
+    const mine = isAllyOwner(state, playerId, building.owner)
     if (mine) score += value
     else if (building.owner !== null) score -= value
 
@@ -143,10 +144,10 @@ export function evaluate(
   }
 
   // 3) 王城攻防与地形 / 威胁 / 补给
-  const myHq = state.buildings.find((b) => b.owner === playerId && b.type === 'hq')
-  const enemyHqs = state.buildings.filter((b) => b.type === 'hq' && b.owner !== playerId)
+  const myHq = state.buildings.find((b) => isAllyOwner(state, playerId, b.owner) && b.type === 'hq')
+  const enemyHqs = state.buildings.filter((b) => b.type === 'hq' && isNonAllyOwner(state, playerId, b.owner))
   const myUnits =
-    cohesion > 0 || threat > 0 || repair > 0 ? state.units.filter((u) => u.owner === playerId) : []
+    cohesion > 0 || threat > 0 || repair > 0 ? state.units.filter((u) => isAllyOwner(state, playerId, u.owner)) : []
   const center =
     myUnits.length > 0
       ? {
@@ -156,7 +157,7 @@ export function evaluate(
       : null
 
   for (const unit of state.units) {
-    if (unit.owner === playerId) {
+    if (isAllyOwner(state, playerId, unit.owner)) {
       for (const hq of enemyHqs) {
         // 越靠近敌方王城越好（12 格以内线性计分）
         score += Math.max(0, 12 - chebyshevDistance(unit, hq)) * 8
@@ -174,11 +175,11 @@ export function evaluate(
   // 己方单位"可能承受的伤害"扣分，敌方单位承受的伤害同额度加分 ——
   // 同一公式从两侧看互为相反数，因此不破坏对称性。
   if (threat > 0) {
-    const enemyUnits = state.units.filter((u) => u.owner !== playerId)
-    const friends = state.units.filter((u) => u.owner === playerId)
+    const enemyUnits = state.units.filter((u) => isNonAllyOwner(state, playerId, u.owner))
+    const friends = state.units.filter((u) => isAllyOwner(state, playerId, u.owner))
     let net = 0
     for (const unit of state.units) {
-      const foes = unit.owner === playerId ? enemyUnits : friends
+      const foes = isAllyOwner(state, playerId, unit.owner) ? enemyUnits : friends
       let incoming = 0
       for (const foe of foes) {
         const foeType = unitType(foe.type, data)
@@ -186,7 +187,7 @@ export function evaluate(
         if (chebyshevDistance(foe, unit) > foeType.move + foeType.rangeMax) continue
         incoming += computeDamage(state, foe, unit, data)
       }
-      net += unit.owner === playerId ? -incoming : incoming
+      net += isAllyOwner(state, playerId, unit.owner) ? -incoming : incoming
     }
     score += net * threat
   }
@@ -197,7 +198,7 @@ export function evaluate(
       const type = unitType(unit.type, data)
       if (unit.hp >= type.hp) continue
       const here = buildingAt(state, unit.x, unit.y)
-      if (!here || here.owner !== playerId) continue
+      if (!here || isNonAllyOwner(state, playerId, here.owner)) continue
       score += Math.min(data.rules.repairPerTurn, type.hp - unit.hp) * repair
     }
   }
@@ -208,11 +209,11 @@ export function evaluate(
   // 而不是只看造价（v1 完全没用上 matchup 伤害表：枪克骑、盾克步…全部浪费）。
   if (counterValue > 0) {
     for (const unit of state.units) {
-      const foes = state.units.filter((u) => u.owner !== unit.owner)
+      const foes = state.units.filter((u) => !areAllies(state, unit.owner, u.owner))
       if (foes.length === 0) continue
       let sum = 0
       for (const foe of foes) sum += baseDamage(unit.type, foe.type, data)
-      score += (unit.owner === playerId ? 1 : -1) * (sum / foes.length) * counterValue
+      score += (isAllyOwner(state, playerId, unit.owner) ? 1 : -1) * (sum / foes.length) * counterValue
     }
   }
 
@@ -222,7 +223,7 @@ export function evaluate(
     for (const unit of state.units) {
       const type = unitType(unit.type, data)
       if (type.rangeMax < 2) continue // 只对远程单位有意义
-      const foes = state.units.filter((u) => u.owner !== unit.owner)
+      const foes = state.units.filter((u) => !areAllies(state, unit.owner, u.owner))
       if (foes.length === 0) continue
       let canShoot = false
       let canBeShot = false
@@ -233,7 +234,7 @@ export function evaluate(
         if (d <= foeType.rangeMax) canBeShot = true
       }
       if (canShoot && !canBeShot) {
-        score += (unit.owner === playerId ? 1 : -1) * type.cost * rangedSafety
+        score += (isAllyOwner(state, playerId, unit.owner) ? 1 : -1) * type.cost * rangedSafety
       }
     }
   }
@@ -246,13 +247,13 @@ export function evaluate(
       const type = unitType(unit.type, data)
       let incoming = 0
       for (const foe of state.units) {
-        if (foe.owner === unit.owner) continue
+        if (areAllies(state, unit.owner, foe.owner)) continue
         const foeType = unitType(foe.type, data)
         if (chebyshevDistance(foe, unit) > foeType.move + foeType.rangeMax) continue
         incoming += computeDamage(state, foe, unit, data)
       }
       if (incoming >= unit.hp) {
-        score += (unit.owner === playerId ? -1 : 1) * type.cost * exposure
+        score += (isAllyOwner(state, playerId, unit.owner) ? -1 : 1) * type.cost * exposure
       }
     }
   }

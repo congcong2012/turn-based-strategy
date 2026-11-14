@@ -314,6 +314,7 @@ export function usePveGame(options: UsePveGameOptions = {}): UsePveGameResult {
       leave: exit,
       setReady: noop,
       setNickname: noop,
+      setTeamMode: noop,
       startGame: noop,
       setStrategy: noop,
       sendCommand: (cmd) => {

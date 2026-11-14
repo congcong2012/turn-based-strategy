@@ -3,6 +3,7 @@ import { DATA, getMap, unitType } from '../game/data'
 import { attackableTargets, reachableDestinations } from '../game/movement'
 import { buildingAt, unitAt } from '../game/board'
 import { scoreOf } from '../game/state'
+import { teamLabel, teamOf } from '../game/teams'
 import { reportTextFromState, resultText, summarizeBattle } from '../game/battleReport'
 import type { RoomView } from '../net/roomSession'
 import type { RoomActions } from '../hooks/useRoom'
@@ -41,8 +42,14 @@ export interface GameScreenProps {
 }
 
 const ROLE_COLORS = ['#c65a44', '#4aa89b', '#d2a24b', '#9078c8']
+/** 2v2 的队伍配色：同队同色，混战时仍按座位取 ROLE_COLORS */
+const TEAM_COLORS = ['#c65a44', '#4aa89b']
 
 function playerColor(state: GameState, playerId: PlayerId): string {
+  if (state.teams) {
+    const team = teamOf(state, playerId)
+    if (team !== null) return TEAM_COLORS[team % TEAM_COLORS.length]
+  }
   const index = state.players.indexOf(playerId)
   return ROLE_COLORS[(index < 0 ? 0 : index) % ROLE_COLORS.length]
 }
@@ -612,6 +619,12 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
                 {view.players.map((p) => (
                   <span key={p.playerId} className="block">
                     {p.nickname}：{game.deploy[p.playerId]?.done ? '已确认' : '部署中'}
+                    {game.teams ? (
+                      <span className="tag tag-team" data-testid={'teamtag-' + p.playerId}>
+                        {' '}
+                        {teamLabel(teamOf(game, p.playerId) ?? 0)}
+                      </span>
+                    ) : null}
                     {p.connected ? '' : '（已断线）'}
                   </span>
                 ))}
@@ -633,6 +646,12 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
                     <div key={p} className="score-row" data-testid={'score-' + p}>
                       <span style={{ color: playerColor(game, p) }}>
                         {nameOf(view, p)}
+                        {game.teams ? (
+                          <span className="tag tag-team" data-testid={'teamtag-' + p}>
+                            {' '}
+                            {teamLabel(teamOf(game, p) ?? 0)}
+                          </span>
+                        ) : null}
                         {/* 单人练习没有"房主"这个概念（pveSession 里 seat 0 也标了 isHost），
                             在 PVE 局里显示 👑 房主 纯属噪音，只给联机局显示 */}
                         {mode === 'online' && view.players.find((entry) => entry.playerId === p)?.isHost ? (
@@ -828,11 +847,18 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
               {/* 观战者不属于任何一方，不能按"我方是否获胜"判胜负（以前这里会对观战者显示"败北"） */}
               {view.spectating
                 ? '对局结束'
-                : game.winner === null
-                  ? '和局'
-                  : game.winner === view.selfId
-                    ? '胜利！'
-                    : '败北'}
+                : game.teams
+                  ? // 2v2：看队伍，不看"我是不是那个代表玩家"（队友都在场时 winner 只填其中一人）
+                    game.winnerTeam === null || game.winnerTeam === undefined
+                    ? '和局'
+                    : game.winnerTeam === teamOf(game, view.selfId)
+                      ? '胜利！'
+                      : '败北'
+                  : game.winner === null
+                    ? '和局'
+                    : game.winner === view.selfId
+                      ? '胜利！'
+                      : '败北'}
             </h2>
             <p className="muted" data-testid="game-over-result">
               结果：{resultText(battleSummary, nameOfPlayer)}

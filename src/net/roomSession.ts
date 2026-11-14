@@ -26,6 +26,7 @@ import {
   setAiDifficulty as lobbySetAiDifficulty,
   setAiSlotCount as lobbySetAiSlotCount,
   setMapId as lobbySetMapId,
+  setTeamMode as lobbySetTeamMode,
   setNickname as lobbySetNickname,
   setReady as lobbySetReady,
   upsertPlayer,
@@ -42,11 +43,12 @@ import { MAX_AI_STEPS, nextCommand, resolveDifficulty } from '../ai'
 import type { Difficulty } from '../ai'
 import { applyCommand } from '../game/commands'
 import { defaultMapFor, getMap, hasMap } from '../game/data'
+import { diagonalTeams } from '../game/teams'
 import { decodeShareCode, encodeShareCode, isUserMapId, upsertUserMap } from '../app/mapStore'
 import { describeErrorCode } from '../game/errorText'
 import { appendJournal, emptyJournal } from '../game/journal'
 import type { Journal, LoggedEvent, LogRound } from '../game/journal'
-import { createGame } from '../game/state'
+import { createGame, withTeams } from '../game/state'
 import type { Command, GameEvent, GameState } from '../game/types'
 import type {
   LobbyPlayer,
@@ -124,6 +126,8 @@ export interface RoomView {
    * 注意它可能被收敛：`oracle` 只在两人局成立，多人局里会回落成 `hard`（见 `resolveDifficulty`）。
    */
   aiDifficulty: Difficulty
+  /** 对局模式：混战 / 2v2（房主在大厅设置，随快照同步） */
+  teamMode: 'ffa' | '2v2'
   /** 本会话是不是观战者（只读：不占席位、不能操作） */
   spectating: boolean
   /** 是否启用了房间密码（只暴露布尔值，不回显明文） */
@@ -206,6 +210,8 @@ export interface RoomSession {
   setAiSlots: (count: number) => void
   /** 房主选"替真人行动的 AI 用哪一档"（掉线托管 + AI 补位共用；仅房主有效） */
   setAiDifficulty: (difficulty: Difficulty) => void
+  /** 房主：切换对局模式（混战 / 2v2）。2v2 需要 4 个席位，否则开始按钮保持禁用 */
+  setTeamMode: (mode: 'ffa' | '2v2') => void
   /** 房主：LOBBY → DEPLOY，创建权威对局状态 */
   startGame: () => void
   /** 任何玩家：发出对局指令（房主本地校验，客户端发给房主校验） */
@@ -335,7 +341,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
   function aiSeatName(playerId: PlayerId): string {
     const seat = Number(playerId.slice(AI_SEAT_PREFIX.length))
     const ordinal = Number.isFinite(seat) ? seat : 0
-    const labels = ['电脑甲', '电脑乙', '电脑丙']
+    // 四人局要用到第 4 个名字（2 真人 + 2 AI 时是 ai-2 / ai-3）
+    const labels = ['电脑甲', '电脑乙', '电脑丙', '电脑丁']
     return labels[ordinal] ?? '电脑' + (ordinal + 1)
   }
 
@@ -412,6 +419,7 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       // 以 lobby 快照为准：客户端只能从快照得知这个设置（房主侧两者本就一致）
       aiSlotCount: lobby?.aiSlotCount ?? aiSlotCount,
       aiDifficulty: lobby?.aiDifficulty ?? aiDifficulty,
+      teamMode: lobby?.teamMode ?? 'ffa',
       spectating,
       passwordEnabled: roomPassword !== null,
       myTurn: game !== null && game.phase === 'PLAYING' && game.players[game.turnIndex] === selfId,
@@ -1228,6 +1236,8 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       }
       const mapId = lobby?.mapId ?? defaultMapFor(order.length)
       game = createGame(mapId, order)
+      // 2v2：按座位对半分队（0&3 / 1&2），队友互相不能攻击、也不能抢对方据点
+      if (lobby?.teamMode === '2v2') game = withTeams(game, diagonalTeams(order.length))
       if (election) election = electionSetPhase(election, 'DEPLOY')
       if (lobby) lobby = { ...lobby, phase: 'DEPLOY' }
       notice =
@@ -1279,6 +1289,15 @@ export function createRoomSession(options: RoomSessionOptions): RoomSession {
       if (!isHost() || !lobby) return
       lobby = lobbySetAiDifficulty(lobby, difficulty)
       aiDifficulty = lobby.aiDifficulty
+      broadcastLobby()
+      emit()
+    },
+
+    setTeamMode(mode: 'ffa' | '2v2'): void {
+      if (!isHost() || !lobby) return
+      // 开局后不再改模式：队伍写在 state 里，改 lobby 不会影响已开始的对局
+      if (game) return
+      lobby = lobbySetTeamMode(lobby, mode)
       broadcastLobby()
       emit()
     },

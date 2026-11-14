@@ -13,6 +13,7 @@ import {
   setHostId,
   setNickname,
   setReady,
+  setTeamMode,
   upsertPlayer,
 } from '../../src/app/lobbyReducer'
 
@@ -142,5 +143,46 @@ describe('AI 档（AI 补位 + 掉线托管共用）', () => {
     let lobby = withPlayers(2)
     lobby = upsertPlayer(lobby, { playerId: 'carol', nickname: '丙' })
     expect(lobbyAllowsDeepAi(lobby)).toBe(false)
+  })
+})
+
+describe('★ 2v2 需要四个席位', () => {
+  function ready(lobby: ReturnType<typeof createLobby>, ...ids: string[]) {
+    let next = lobby
+    for (const id of ids) next = setReady(next, id, true)
+    return next
+  }
+
+  function twoHumans() {
+    let lobby = createLobby('ABC23D', 'alice')
+    lobby = upsertPlayer(lobby, alice)
+    lobby = upsertPlayer(lobby, bob)
+    return lobby
+  }
+
+  it('两人混战：可以开局', () => {
+    const lobby = ready(twoHumans(), 'alice', 'bob')
+    expect(lobby.canStart).toBe(true)
+  })
+
+  it('两人 2v2：席位只有 2，不能开局（缺两队）', () => {
+    const lobby = ready(setTeamMode(twoHumans(), '2v2'), 'alice', 'bob')
+    expect(lobby.teamMode).toBe('2v2')
+    expect(lobby.canStart).toBe(false)
+  })
+
+  it('两人 + AI 补到 4 席 → 可以开局', () => {
+    let lobby = setTeamMode(twoHumans(), '2v2')
+    lobby = setAiSlotCount(lobby, 4)
+    lobby = ready(lobby, 'alice', 'bob')
+    expect(lobby.canStart).toBe(true)
+  })
+
+  it('切回混战：不受四席限制', () => {
+    let lobby = setTeamMode(twoHumans(), '2v2')
+    lobby = ready(lobby, 'alice', 'bob')
+    expect(lobby.canStart).toBe(false)
+    lobby = setTeamMode(lobby, 'ffa')
+    expect(lobby.canStart).toBe(true)
   })
 })

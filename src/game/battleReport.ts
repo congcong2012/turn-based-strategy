@@ -12,6 +12,7 @@
 
 import { DATA, buildingType, getMap, unitType } from './data'
 import type { GameData } from './data'
+import { teamLabel } from './teams'
 import { scoreBreakdown } from './state'
 import type { ScoreBreakdown } from './state'
 import type { GameState, PlayerId } from './types'
@@ -79,6 +80,8 @@ export interface BattleSummary {
   rounds: number
   winner: PlayerId | null
   winReason: WinReason | null
+  /** 2v2 时获胜队伍编号；混战为 null */
+  winnerTeam?: number | null
   /**
    * 玩家战绩，**已按展示顺序排好**：胜者置顶，其余按得分降序（同分保持原座位顺序）。
    * 直接照着渲染即可，不需要调用方再排一次。
@@ -150,6 +153,7 @@ export function summarizeBattle(
     rounds: state.round,
     winner: state.winner,
     winReason: state.winReason,
+    winnerTeam: state.winnerTeam ?? null,
     players,
     totals: {
       rounds: state.round,
@@ -185,12 +189,15 @@ function safeUnitCost(id: string, data: GameData): number {
   }
 }
 
-/** 单行结果文案：如「甲将军 获胜（攻陷王城）」 */
+/** 单行结果文案：如「甲将军 获胜（攻陷王城）」；2v2 时是「甲队 获胜（击杀主帅）」 */
 export function resultText(summary: BattleSummary, nameOf: (playerId: PlayerId) => string): string {
+  const reason = summary.winReason ? WIN_REASON_TEXT[summary.winReason] : '获胜'
+  if (summary.winnerTeam !== null && summary.winnerTeam !== undefined) {
+    return teamLabel(summary.winnerTeam) + ' 获胜（' + reason + '）'
+  }
   if (summary.winner === null) {
     return summary.winReason === 'score' ? '双方同分，和局' : '和局'
   }
-  const reason = summary.winReason ? WIN_REASON_TEXT[summary.winReason] : '获胜'
   return nameOf(summary.winner) + ' 获胜（' + reason + '）'
 }
 

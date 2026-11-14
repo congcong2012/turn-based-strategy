@@ -13,6 +13,7 @@ import type { GameData } from '../game/data'
 import { buildingAt, defenseOf, unitById } from '../game/board'
 import { baseDamage, canCounter, computeDamage } from '../game/combat'
 import { chebyshevDistance } from '../game/movement'
+import { areAllies, isAllyOwner, isNonAllyOwner } from '../game/teams'
 import type { AiProfile } from './profile'
 import type { Command, GameState, PlayerId } from '../game/types'
 
@@ -129,7 +130,7 @@ function scoreAttack(
   if (!kills && profile.focusFire > 0.15) {
     let incoming = damage
     for (const mate of state.units) {
-      if (mate.owner !== attacker.owner || mate.id === attacker.id || mate.acted) continue
+      if (!areAllies(state, attacker.owner, mate.owner) || mate.id === attacker.id || mate.acted) continue
       if (chebyshevDistance(mate, defender) > 1) continue
       incoming += computeDamage(state, mate, defender, data)
       if (incoming >= defender.hp) break
@@ -156,7 +157,7 @@ function scoreMove(
 
   // 靠近敌方王城
   for (const hq of state.buildings) {
-    if (hq.type !== 'hq' || hq.owner === playerId) continue
+    if (hq.type !== 'hq' || isAllyOwner(state, playerId, hq.owner)) continue
     const before = chebyshevDistance(unit, hq)
     const after = chebyshevDistance(dest, hq)
     if (after < before) score = Math.max(score, (before - after) * 14)
@@ -164,7 +165,7 @@ function scoreMove(
 
   // 靠近可占领据点（中立村落 / 敌方据点）
   for (const building of state.buildings) {
-    if (building.owner === playerId) continue
+    if (isAllyOwner(state, playerId, building.owner)) continue
     const before = chebyshevDistance(unit, building)
     const after = chebyshevDistance(dest, building)
     if (after < before) score = Math.max(score, (before - after) * 12)
@@ -174,7 +175,7 @@ function scoreMove(
   // 而不是 v1 对任何据点一视同仁的每格 12 分
   if (profile.economy > 0) {
     for (const building of state.buildings) {
-      if (building.owner === playerId) continue
+      if (isAllyOwner(state, playerId, building.owner)) continue
       const before = chebyshevDistance(unit, building)
       const after = chebyshevDistance(dest, building)
       if (after >= before) continue
@@ -185,14 +186,14 @@ function scoreMove(
 
   // 直接踩上可占领的据点：下一步就能占领
   const here = buildingAt(state, dest.x, dest.y)
-  if (here && here.owner !== playerId && unitType(unit.type, data).capture) score += 60
+  if (here && isNonAllyOwner(state, playerId, here.owner) && unitType(unit.type, data).capture) score += 60
 
   // 高防御地形更安全
   score += defenseOf(state, dest.x, dest.y, data) * 30
 
   // 抱团（v1 困难档用过；v2 起不再使用 —— 它正是真实地图上阶梯倒挂的元凶之一）
   if (profile.cohesion > 0) {
-    const mates = state.units.filter((u) => u.owner === playerId && u.id !== unitId)
+    const mates = state.units.filter((u) => isAllyOwner(state, playerId, u.owner) && u.id !== unitId)
     if (mates.length > 0) {
       let sumX = 0
       let sumY = 0
@@ -214,7 +215,7 @@ function scoreMove(
     const defense = defenseOf(state, dest.x, dest.y, data)
     let incoming = 0
     for (const other of state.units) {
-      if (other.owner === playerId) continue
+      if (isAllyOwner(state, playerId, other.owner)) continue
       const otherType = unitType(other.type, data)
       if (chebyshevDistance(dest, other) > otherType.move + otherType.rangeMax) continue
       const base = baseDamage(other.type, unit.type, data)
@@ -229,7 +230,7 @@ function scoreMove(
     // v1：目的地的敌方威胁（简化：2 格内敌方单位数）
     let threats = 0
     for (const other of state.units) {
-      if (other.owner === playerId) continue
+      if (isAllyOwner(state, playerId, other.owner)) continue
       if (chebyshevDistance(dest, other) <= 2) threats += 1
     }
     score -= threats * 25
@@ -238,7 +239,7 @@ function scoreMove(
   // 残血单位躲进己方据点：下一 START 免费回血（补给线，独立开关）
   if (profile.repair > 0) {
     const type = unitType(unit.type, data)
-    if (unit.hp < type.hp && here && here.owner === playerId) {
+    if (unit.hp < type.hp && here && isAllyOwner(state, playerId, here.owner)) {
       score += Math.min(data.rules.repairPerTurn, type.hp - unit.hp) * profile.repair * 0.5
     }
   }
@@ -264,7 +265,7 @@ function scoreProduce(
   const type = data.units[unitTypeId]
   if (!type) return -Infinity
 
-  const enemies = state.units.filter((u) => u.owner !== playerId)
+  const enemies = state.units.filter((u) => isNonAllyOwner(state, playerId, u.owner))
   let avgDamage = 50 // 无敌军时的中性值
   if (enemies.length > 0) {
     let sum = 0
@@ -277,7 +278,7 @@ function scoreProduce(
   // 克制：对敌阵平均伤害越高越值得造（counter 档位权重）
   score += profile.counter * avgDamage
   // 占领手不足（据点 = 经济命脉）：优先补可占领兵种
-  const capturers = state.units.filter((u) => u.owner === playerId && unitType(u.type, data).capture).length
+  const capturers = state.units.filter((u) => isAllyOwner(state, playerId, u.owner) && unitType(u.type, data).capture).length
   if (type.capture && capturers < 2) score += 120
   // 手头宽裕时别把军费攒成死钱
   if ((state.funds[playerId] ?? 0) > type.cost * 3) score += 30
