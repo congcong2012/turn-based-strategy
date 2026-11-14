@@ -305,7 +305,8 @@ test.describe('设置 / 开发者模式', () => {
     await page.getByTestId('pve-opponents-1').click()
     await page.getByTestId('pve-start').click()
     await expect(page.getByTestId('phase-label')).toHaveText('部署')
-    await expect(page.getByTestId('ai-tuning-open')).toHaveCount(0)
+    // 默认（开发者模式关）：侧栏没有调参区块
+    await expect(page.getByTestId('ai-tuning-section')).toHaveCount(0)
 
     // ⚠️ 单人局会自动恢复存档：必须先退出，否则再进来直接接着打、到不了设置页
     await page.getByTestId('leave-button').click()
@@ -322,12 +323,13 @@ test.describe('设置 / 开发者模式', () => {
     await page.getByTestId('pve-start').click()
     await expect(page.getByTestId('phase-label')).toHaveText('部署')
 
-    await page.getByTestId('ai-tuning-open').click()
-    await expect(page.getByTestId('ai-tuning-dialog')).toBeVisible()
+    // 侧栏出现可折叠的调参区块（不是弹层，也不占顶栏）
+    const section = page.getByTestId('ai-tuning-section')
+    await expect(section).toBeVisible()
+    await page.getByTestId('ai-tuning-summary').click()
+    await expect(page.getByTestId('devtools-fields')).toBeVisible()
     await page.getByTestId('devtools-defend-number').fill('0')
     await page.getByTestId('devtools-save').click()
     await expect(page.getByTestId('devtools-status')).toContainText('已保存')
-    await page.getByTestId('ai-tuning-close').click()
-    await expect(page.getByTestId('ai-tuning-dialog')).toHaveCount(0)
   })
 })

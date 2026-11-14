@@ -14,7 +14,7 @@ import { BattleLog } from './BattleLog'
 import { ConnectStatusBadge } from './ConnectStatusBadge'
 import { ConnectionHelp } from './ConnectionHelp'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
-import { AiTuningDialog } from './AiTuningDialog'
+import { AiTuningPanel } from './AiTuningPanel'
 import { useAppSettings } from '../app/settings'
 import { isSoundOn, playSound, setSoundOn, soundForEvent } from './sound'
 import { EMPTY_TAP_STATE, isTouchDevice, nextTapState } from './tapConfirm'
@@ -409,7 +409,6 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
           ) : null}
         </span>
         <span className="hud-group hud-actions">
-          {mode === 'pve' && devMode ? <AiTuningDialog /> : null}
           <button type="button" data-testid="locate-button" onClick={locate} title="把镜头对准我的部署区 / 部队">
             🎯 定位
           </button>
@@ -831,6 +830,17 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
             </p>
           ) : null}
           {mode === 'online' && devMode ? <DiagnosticsPanel view={view} /> : null}
+          {/*
+            开发者模式下的 AI 调参：**放在侧栏**，不占顶栏（顶栏本来就窄，一颗按钮就换行）、
+            也不弹层（弹层会挡住棋盘，调完看不到效果）。
+          */}
+          {mode === 'pve' && devMode ? (
+            <details className="side-tuning" data-testid="ai-tuning-section">
+              <summary data-testid="ai-tuning-summary">🧪 AI 调参（本局）</summary>
+              <p className="muted small">只影响单人练习。保存后下一手生效，不用重开。</p>
+              <AiTuningPanel plainActions compact />
+            </details>
+          ) : null}
           <p className="muted small">
             {/* 触摸设备没有滚轮：写"滚轮缩放"会让人找滚轮（实测新手会去捏屏幕但以为"提示说的是滚轮"） */}
             地图：{map.name}（{map.width}×{map.height}） · 拖拽平移，{touch ? '双指缩放' : '滚轮缩放'}

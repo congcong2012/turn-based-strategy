@@ -719,3 +719,23 @@ button.block { width: 100%; margin-bottom: 8px; }
   flex: 0 0 auto;
 }
 .devtools-actions.is-plain { border-top: none; padding-top: 0; }
+
+/* 侧栏里的「AI 调参」（开发者模式）：可折叠区块，展开后单列紧凑排布 */
+.side-tuning {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft);
+}
+.side-tuning > summary {
+  cursor: pointer; font-size: 13px; color: var(--gold); font-family: var(--serif);
+  letter-spacing: 1px; list-style: none;
+}
+.side-tuning > summary::-webkit-details-marker { display: none; }
+.side-tuning > summary::before { content: '▸ '; color: var(--muted); }
+.side-tuning[open] > summary::before { content: '▾ '; }
+.side-tuning p { margin: 6px 0 8px; }
+
+/* 紧凑模式：强制单列（侧栏只有 ~300px，媒体查询按视口算会误判成两列） */
+.devtools-grid.is-compact { display: flex; flex-direction: column; gap: 10px; }
+.devtools-grid.is-compact .devtools-label { font-size: 12px; flex-direction: column; gap: 1px; }
+.devtools-grid.is-compact .devtools-control { gap: 6px; }
+.devtools-grid.is-compact .devtools-number { width: 64px; }
+.devtools-grid.is-compact .devtools-default { display: none; }

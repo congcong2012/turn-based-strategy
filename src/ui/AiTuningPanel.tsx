@@ -10,7 +10,14 @@ import { PROFILES } from '../ai/profile'
 import { TUNING_FIELDS, TUNING_TOGGLES, clearAiTuning, loadAiTuning, saveAiTuning } from '../app/aiTuning'
 import type { AiTuning } from '../app/aiTuning'
 
-export function AiTuningPanel({ plainActions = false }: { plainActions?: boolean } = {}) {
+export function AiTuningPanel({
+  plainActions = false,
+  compact = false,
+}: {
+  plainActions?: boolean
+  /** 侧栏里用：强制单列（媒体查询看的是视口宽度，侧栏只有 300px，两列会挤爆） */
+  compact?: boolean
+} = {}) {
   const [tuning, setTuning] = useState<AiTuning>(() => loadAiTuning())
   const [saved, setSaved] = useState(false)
 
@@ -39,7 +46,7 @@ export function AiTuningPanel({ plainActions = false }: { plainActions?: boolean
 
   return (
     <div data-testid="ai-tuning-panel">
-      <div className="devtools-grid" data-testid="devtools-fields">
+      <div className={'devtools-grid' + (compact ? ' is-compact' : '')} data-testid="devtools-fields">
         {TUNING_FIELDS.map((field) => {
           const current = typeof tuning[field.key] === 'number' ? (tuning[field.key] as number) : undefined
           const fallback = base[field.key] as number
