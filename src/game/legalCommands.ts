@@ -94,6 +94,17 @@ export function playCommandsFor(state: GameState, playerId: PlayerId, data: Game
     ).length
     if (orderedThisTurn >= data.rules.unitsPerBarracksPerTurn) continue
 
+    /**
+     * ★ 队列上限：同一兵营**任何回合**积累的未出场订单都不能超过每回合产量。
+     *
+     * 为什么需要：出场只认兵营四邻的空位，一旦被围住，订单就永远留在 `pending` 里 ——
+     * 钱照扣、兵不出。实测四人局里三家从第 4 回合起常年卡着 2–3 个兵，
+     * 相当于把军费沉在一条永远不通的管道里。允许"排队"是有意的（下回合出场），
+     * 但不该无限排下去。
+     */
+    const queued = state.pending.filter((p) => p.buildingId === building.id && p.owner === playerId).length
+    if (queued >= data.rules.unitsPerBarracksPerTurn) continue
+
     const total = unitsOf(state, playerId).length + state.pending.filter((p) => p.owner === playerId).length
     if (total >= data.rules.unitCap) continue
 

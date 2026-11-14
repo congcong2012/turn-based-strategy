@@ -14,6 +14,8 @@ import { buildingAt, defenseOf, unitById } from '../game/board'
 import { baseDamage, canCounter, computeDamage } from '../game/combat'
 import { chebyshevDistance } from '../game/movement'
 import { areAllies, isAllyOwner, isNonAllyOwner } from '../game/teams'
+import { defenseAlarm } from './defense'
+import type { DefenseAlarm } from './defense'
 import type { AiProfile } from './profile'
 import type { Command, GameState, PlayerId } from '../game/types'
 
@@ -53,6 +55,10 @@ export function scorePlay(
   data: GameData,
   profile: AiProfile,
 ): number {
+  // ⚠️ 守土警报按"一次决策"算一次：它内部是 O(据点 × 单位)，
+  // 放进 scoreMove 会变成 ×候选数（实测能把整局拖慢一个量级，AI 用例直接超时）
+  const alarm = defenseAlarm(state, playerId)
+
   switch (cmd.type) {
     case 'attack':
       return scoreAttack(state, cmd.unitId, cmd.targetId, data, profile)
@@ -78,7 +84,7 @@ export function scorePlay(
     }
 
     case 'move':
-      return scoreMove(state, playerId, cmd.unitId, cmd.x, cmd.y, data, profile)
+      return scoreMove(state, playerId, cmd.unitId, cmd.x, cmd.y, data, profile, alarm)
 
     case 'produce': {
       const type = data.units[cmd.unitType]
@@ -149,6 +155,7 @@ function scoreMove(
   y: number,
   data: GameData,
   profile: AiProfile,
+  alarm: DefenseAlarm | null = null,
 ): number {
   const unit = unitById(state, unitId)
   if (!unit) return -Infinity
@@ -190,6 +197,15 @@ function scoreMove(
 
   // 高防御地形更安全
   score += defenseOf(state, dest.x, dest.y, data) * 30
+
+  // —— 回防：己方王城/兵营门口出现敌军时，回身的价值随距离陡增 ——
+  // 为什么放在这里（而不是只写进 evaluate）：hard 档先按启发式取前 K 名再做前瞻，
+  // 没有这个分，"往回走"根本进不了候选池 —— 表现就是老家被贴脸了也没人回。
+  if (alarm) {
+    const before = chebyshevDistance(unit, alarm.at)
+    const after = chebyshevDistance(dest, alarm.at)
+    if (after < before) score += alarm.weight * (before - after)
+  }
 
   // 抱团（v1 困难档用过；v2 起不再使用 —— 它正是真实地图上阶梯倒挂的元凶之一）
   if (profile.cohesion > 0) {

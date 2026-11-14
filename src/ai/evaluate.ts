@@ -24,6 +24,7 @@ import { baseDamage, computeDamage } from '../game/combat'
 import { chebyshevDistance } from '../game/movement'
 import { scoreOf } from '../game/state'
 import { areAllies, isAllyOwner, isNonAllyOwner } from '../game/teams'
+import { defenseAlarm } from './defense'
 import type { GameState, PlayerId } from '../game/types'
 
 /** 据点权重：王城 ≫ 兵营 > 村落 */
@@ -144,6 +145,21 @@ export function evaluate(
   }
 
   // 3) 王城攻防与地形 / 威胁 / 补给
+  // 守土（预判）：王城/兵营被贴脸时，"有人在门口守着"本身就该加分。
+  // 与 heuristics 的 defenseAlarm 同源 —— 否则会出现"启发式把回防动作送进候选池、
+  // 评估器却看不出差别"，最后由 tie-break 随机决定回不回。
+  if (defend > 0) {
+    const alarm = defenseAlarm(state, playerId)
+    if (alarm) {
+      let guards = 0
+      for (const unit of state.units) {
+        if (!isAllyOwner(state, playerId, unit.owner)) continue
+        if (chebyshevDistance(unit, alarm.at) <= 3) guards += 1
+      }
+      score += Math.min(guards, 3) * alarm.weight * 0.8
+    }
+  }
+
   const myHq = state.buildings.find((b) => isAllyOwner(state, playerId, b.owner) && b.type === 'hq')
   const enemyHqs = state.buildings.filter((b) => b.type === 'hq' && isNonAllyOwner(state, playerId, b.owner))
   const myUnits =
