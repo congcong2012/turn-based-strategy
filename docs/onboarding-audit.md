@@ -7,7 +7,8 @@
 - 桌面 1280×900：主页 → 单人练习设置 → 部署 → 行动 → 规则速查 → 联机大厅
 - 手机 390×844（`isMobile` + `hasTouch`）：主页 → 设置 → 部署
 
-截图存在 `audit/`（`01-home-desktop` … `12-deploy-mobile`），
+截图存在工作区的 `screenshots/audit/`（相对本文件：`../../screenshots/audit/`；
+`01-home-desktop` … `16-hud-mobile-fixed`），
 驱动脚本 `tmp/onboarding-walk.mjs`（诊断用，不是回归测试）。
 全程 **0 个 JS 异常**。
 
