@@ -159,7 +159,7 @@ export function RulesPanel({ onNavigate }: RulesPanelProps) {
         </table>
         </div>
         <ul className="rules-list">
-          <li>开局资金 {DATA.rules.startFunds}，每方场上单位上限 {DATA.rules.unitCap}</li>
+          <li>开局军费 {DATA.rules.startFunds}，每方场上单位上限 {DATA.rules.unitCap}</li>
           <li>占领值 {DATA.rules.capturePoints}：满血步兵每次 +10，两次占领完成</li>
           <li>站在己方据点上的单位每回合回复 {DATA.rules.repairPerTurn} HP</li>
           <li>生产单位在下一个回合开始出场（兵营格 → 相邻空格 → 顺延）</li>
@@ -171,8 +171,19 @@ export function RulesPanel({ onNavigate }: RulesPanelProps) {
         <ul className="rules-list">
           <li>占领对方王城 → 该玩家被淘汰（部队撤离、其余据点归中立）</li>
           <li>对方场上单位归零 → 同样淘汰</li>
-          <li>最后存活者获胜；打满 {DATA.rules.roundLimit} 大回合则按据点 + 兵力 + 资金计分</li>
+          <li>最后存活者获胜；打满 {DATA.rules.roundLimit} 大回合则按据点 + 兵力 + 军费计分</li>
           <li>任何时候可以「认输」</li>
+        </ul>
+      </section>
+
+      <section className="panel">
+        <h2>2v2 队伍模式（联机）</h2>
+        <ul className="rules-list">
+          <li>在大厅把「模式」切成 <b>2v2</b>：需要 <b>4 个席位</b>（真人在座 + AI 补位凑满）才能开局</li>
+          <li><b>对角同队</b>：0 号与 3 号一队（甲队）、1 号与 2 号一队（乙队）—— 队友分处地图两端，夹击中路是天然打法</li>
+          <li>队友之间<b>不能攻击</b>，也不能抢对方的据点；其余规则与混战完全一致</li>
+          <li>胜负按<b>队伍</b>算：一队两人都被淘汰这队才出局，最后只剩一队即获胜（结算与战报写作「甲队 / 乙队获胜」）</li>
+          <li>队伍模式下棋盘与记分牌按<b>队伍色</b>着色 —— 此时设置里的「我的颜色」不生效</li>
         </ul>
       </section>
 

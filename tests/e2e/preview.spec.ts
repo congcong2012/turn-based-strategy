@@ -141,8 +141,8 @@ test.describe('生产构建（GitHub Pages 子路径）', () => {
     // 生产构建里提示条同样要出现（电脑回合进行中）
     await expect(page.getByTestId('ai-thinking')).toBeVisible()
     await expect
-      .poll(async () => page.getByTestId('current-player').innerText(), { timeout: 45_000 })
-      .toContain('（你）')
+      .poll(async () => page.getByTestId('current-player').getAttribute('data-self'), { timeout: 45_000 })
+      .toBe('true')
     await expect(page.getByTestId('ai-thinking')).toHaveCount(0)
 
     const ai = await page.evaluate(() => {

@@ -15,7 +15,10 @@ import { useSyncExternalStore } from 'react'
 
 export const SETTINGS_STORAGE_KEY = 'ancient-tactics.settings'
 
-/** 可选的"我的颜色"（与棋盘默认的四色一致） */
+/** 可选的"我的颜色"（与棋盘默认的四色一致）。
+ *  ⚠️ 与 `render/playerColors.ts` 的 ROLE_COLORS 是同四个值的两份手写副本
+ *  （直接 import 会造成 settings ↔ playerColors 循环依赖）—— 一致性由
+ *  `tests/unit/settings.test.ts` 的对齐用例钉住，改调色板时两边一起改。 */
 export const SELF_COLOR_CHOICES = [
   { hex: '#c65a44', name: '赤' },
   { hex: '#4aa89b', name: '青' },

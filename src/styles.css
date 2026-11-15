@@ -214,8 +214,6 @@ button.danger:hover:not(:disabled) { border-color: var(--red); }
 .sdp-panel textarea { margin-top: 6px; }
 .sdp-panel button { margin-top: 10px; }
 
-.app-footer { text-align: center; padding-top: 8px; }
-
 @media (max-width: 520px) {
   .room-code { font-size: 22px; letter-spacing: 4px; }
 }
@@ -422,7 +420,7 @@ button.block { width: 100%; margin-bottom: 8px; }
 .conn-badge.st-reconnecting { border-color: #7a5f2a; color: #f0d9a8; }
 .conn-badge.st-reconnecting .conn-dot { background: var(--gold); animation: connPulse 0.8s infinite; }
 .conn-badge.st-failed { border-color: #7a3a2a; color: #f0b6a8; }
-.conn-badge.st-failed .conn-dot { background: #d94f3d; }
+.conn-badge.st-failed .conn-dot { background: var(--red); }
 @keyframes connPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
 .mode-row button.picked {
@@ -442,6 +440,8 @@ button.block { width: 100%; margin-bottom: 8px; }
 
 /* ===== 主页 / 规则页 / 页脚 / 捐赠 ===== */
 .home-page { max-width: 760px; }
+/* 规则页表格多，和主页同宽；手机上仍是 100% + 表格内部横向滚动 */
+.rules-page { max-width: 760px; }
 .home-header { text-align: center; padding: 26px 0 4px; }
 .home-header h1 {
   font-size: 40px;
@@ -456,7 +456,7 @@ button.block { width: 100%; margin-bottom: 8px; }
   -webkit-text-fill-color: transparent;
   text-shadow: 0 2px 24px rgba(210, 162, 75, 0.18);
 }
-.home-header p { margin: 6px 0 0; }
+.home-header p { margin: 6px 0 0; text-wrap: balance; }
 
 .home-entries { display: flex; flex-direction: column; gap: 12px; }
 .entry-card {
@@ -503,7 +503,8 @@ button.block { width: 100%; margin-bottom: 8px; }
 .rules-table tbody tr:nth-child(even) td { background: rgba(255, 255, 255, 0.015); }
 .rules-table .cell-strong { color: var(--gold); font-weight: 700; }
 
-.app-footer { display: flex; flex-direction: column; gap: 8px; align-items: center; padding-top: 10px; }
+/* 页脚：居中一排（规则入口 + 捐赠），下面是一行版本信息 */
+.app-footer { display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; padding-top: 10px; }
 .footer-row { justify-content: center; gap: 14px; }
 
 .donate-button { font-size: 13px; padding: 7px 14px; border-color: #5a3a31; color: #f0c9b6; }

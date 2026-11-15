@@ -221,7 +221,7 @@ export function PveSetup({ onStart, onNavigate, preferredMapId }: PveSetupProps)
 
       <section className="panel">
         <h2>我的阵营</h2>
-        <p className="muted small">阵营（出生角）同时决定出手顺序：<b>0 号先手</b>。</p>
+        <p className="muted small">阵营（出生角）同时决定出手顺序：<b>0 号先手</b>。它只管位置，<b>不管颜色</b> —— 自己的颜色在首页「设置 → 我的颜色」里改。</p>
         <div className="unit-picker" data-testid="pve-seats">
           {seats.map((i) => (
             <button

@@ -219,7 +219,7 @@ function tallyLine(tally: PlayerTally, selfId?: PlayerId | null): string {
       tally.score.buildings +
       ' / 兵力 ' +
       tally.score.units +
-      ' / 资金 ' +
+      ' / 军费分 ' +
       tally.score.funds +
       '）',
   )

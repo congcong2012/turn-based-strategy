@@ -812,7 +812,8 @@ export class BoardApp {
       const ratio = Math.max(0, unit.hp) / type.hp
       v.bar.clear()
       v.bar.rect(cx - 16, cy + 12, 32, 4).fill(0x14110f)
-      v.bar.rect(cx - 16, cy + 12, 32 * ratio, 4).fill(ratio > 0.5 ? 0x6fcf6a : ratio > 0.25 ? 0xd9a441 : 0xd94f3d)
+      // 血条三档色：与 UI 令牌对齐（--gold #d2a24b / 攻击红 #d65a44），高血量仍用绿
+      v.bar.rect(cx - 16, cy + 12, 32 * ratio, 4).fill(ratio > 0.5 ? 0x6fcf6a : ratio > 0.25 ? 0xd2a24b : 0xd65a44)
     }
     for (const [id, v] of [...this.unitViews]) {
       if (alive.has(id)) continue

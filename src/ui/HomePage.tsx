@@ -1,4 +1,3 @@
-import { versionLine } from '../version'
 import type { Page } from '../app/route'
 import { AppFooter } from './AppFooter'
 import { SettingsDialog } from './SettingsDialog'
@@ -16,7 +15,7 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
       <header className="app-header home-header">
         <h1>古代战棋</h1>
         <p className="muted">
-          纯静态、零服务器的回合制战棋：好友打开网址、输入同一个房间码即可开局，<b>2–4 人</b>混战。
+          纯静态、零服务器的回合制战棋：打开网址、输入房间码即可开局，<b>2–4 人</b>混战或 <b>2v2</b> 组队。
         </p>
         <p className="muted small">不需要注册、不需要下载、不收集任何数据；所有对局数据只在你们几台设备之间直连。</p>
       </header>
@@ -26,7 +25,7 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
           <span className="entry-icon">⚔️</span>
           <span className="entry-title">联机对战</span>
           <span className="entry-desc">
-            {roomCode ? '检测到邀请链接：' + roomCode + '，点击进入房间' : '输入房间码或创建房间，2–4 人开一局'}
+            {roomCode ? '检测到邀请链接：' + roomCode + '，点击进入房间' : '输入房间码或创建房间：2–4 人混战，或 2v2 组队'}
           </span>
         </button>
 
@@ -53,7 +52,7 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
       <section className="panel">
         <h2>三步开局</h2>
         <ol className="rules-list">
-          <li><b>进房间</b>：房主输入 6 位房间码（或点「随机生成」），把「复制邀请链接」发给好友</li>
+          <li><b>进房间</b>：房主在大厅留空直接点「创建房间」（自动生成 6 位码），再把「复制邀请链接」发给好友；加入的一方填那 6 位码即可</li>
           <li><b>部署</b>：预算 4000、最多 4 个单位，放在高亮的己方部署区</li>
           <li><b>开打</b>：抢中立村落攒军费、在兵营造兵，攻陷对方王城或全歼对手即获胜</li>
         </ol>
@@ -61,7 +60,6 @@ export function HomePage({ onNavigate, roomCode }: HomePageProps) {
       </section>
 
       <AppFooter onNavigate={onNavigate} />
-      <p className="muted small" style={{ textAlign: 'center' }}>{versionLine()}</p>
     </div>
   )
 }

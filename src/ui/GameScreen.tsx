@@ -382,13 +382,21 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
             阶段 <b data-testid="phase-label">{isDeploy ? '部署' : isOver ? '结束' : '行动'}</b>
           </span>
           <span className="hud-item">
-            当前 <b data-testid="current-player" style={{ color: playerColor(game, currentPlayer, view.selfId) }}>
+            当前{' '}
+            <b
+              data-testid="current-player"
+              /* 机器可读的"是不是我的回合"：文案层面单人局的昵称本来就叫「你」，
+                 不能靠拼字符串判断（见下） */
+              data-self={currentPlayer === view.selfId ? 'true' : 'false'}
+              style={{ color: playerColor(game, currentPlayer, view.selfId) }}
+            >
               {nameOf(view, currentPlayer)}
-              {currentPlayer === view.selfId ? '（你）' : ''}
+              {/* 单人练习里己方昵称就是「你」，再追加就成"你（你）" —— 只在昵称不是它时才标 */}
+              {currentPlayer === view.selfId && nameOf(view, currentPlayer) !== '你' ? '（你）' : ''}
             </b>
           </span>
           <span className="hud-item">
-            资金 <b data-testid="funds-label">{game.funds[view.selfId] ?? 0}</b>
+            军费 <b data-testid="funds-label">{game.funds[view.selfId] ?? 0}</b>
           </span>
         </span>
         <span className="hud-group hud-badges">
@@ -672,7 +680,7 @@ export function GameScreen({ view, actions, mode = 'online', onRestart, advisorS
                       </span>
                       <span className="muted small">
                         据点 {game.buildings.filter((b) => b.owner === p).length} · 单位{' '}
-                        {game.units.filter((u) => u.owner === p).length} · 资金 {game.funds[p] ?? 0} · 分{' '}
+                        {game.units.filter((u) => u.owner === p).length} · 军费 {game.funds[p] ?? 0} · 分{' '}
                         {scoreOf(game, p, DATA)}
                       </span>
                     </div>

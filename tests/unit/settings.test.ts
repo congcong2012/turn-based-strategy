@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_SETTINGS,
+  SELF_COLOR_CHOICES,
   getSettings,
   normalizeSettings,
   resetSettingsCache,
@@ -91,5 +92,14 @@ describe('ownerColor · 优先级', () => {
     expect(ownerColor(state, 'A', 'A')).toBe(TEAM_COLORS[0])
     expect(ownerColor(state, 'D', 'A')).toBe(TEAM_COLORS[0]) // 队友同色
     expect(ownerColor(state, 'B', 'A')).toBe(TEAM_COLORS[1])
+  })
+})
+
+describe('★ 两份四色表的一致性（settings 与 playerColors 各写了一份，必须钉住）', () => {
+  // SELF_COLOR_CHOICES（设置面板的选项）与 ROLE_COLORS（棋盘座位默认色）
+  // 是同四个值的两份手写副本 —— 直接 import 会造成 settings ↔ playerColors 循环依赖，
+  // 所以用测试钉住：将来任何一边改了调色板，这边立刻红。
+  it('SELF_COLOR_CHOICES 的色值与 ROLE_COLORS 一一对应（顺序相同）', () => {
+    expect([...SELF_COLOR_CHOICES.map((c) => c.hex)]).toEqual([...ROLE_COLORS])
   })
 })

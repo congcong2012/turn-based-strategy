@@ -289,8 +289,8 @@ test.describe('单人练习（PVE）', () => {
 
     // AI 会以约 450ms/步 走完自己的回合，然后把控制权交还人类
     await expect
-      .poll(async () => page.getByTestId('current-player').innerText(), { timeout: 45_000 })
-      .toContain('（你）')
+      .poll(async () => page.getByTestId('current-player').getAttribute('data-self'), { timeout: 45_000 })
+      .toBe('true')
     // 交还之后提示条必须消失
     await expect(page.getByTestId('ai-thinking')).toHaveCount(0)
 
@@ -435,8 +435,8 @@ test.describe('单人练习（PVE）', () => {
     await expect(page.getByTestId('end-turn')).toBeEnabled()
     await page.getByTestId('end-turn').click()
     await expect
-      .poll(async () => page.getByTestId('current-player').innerText(), { timeout: 45_000 })
-      .toContain('（你）')
+      .poll(async () => page.getByTestId('current-player').getAttribute('data-self'), { timeout: 45_000 })
+      .toBe('true')
   })
 
   test('"退出对局"会清掉存档：再进单人练习是设置页', async ({ page }) => {
